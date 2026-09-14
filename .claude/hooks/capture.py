@@ -63,6 +63,12 @@ def read_transcript(path: str | None) -> list[dict]:
     return rows
 
 
+# Background-task completions and system reminders arrive as user-role messages
+# but are not things a human typed. The live UserPromptSubmit hook never fires
+# for them, so backfill skips them too, otherwise the two records disagree.
+SYSTEM_EVENT_MARKERS = ("<task-notification>", "[SYSTEM NOTIFICATION", "<system-reminder>")
+
+
 def is_real_prompt(row: dict) -> bool:
     """A human prompt: role=user with plain string content (tool results are lists)."""
     if row.get("type") != "user":
@@ -70,7 +76,9 @@ def is_real_prompt(row: dict) -> bool:
     if "toolUseResult" in row:
         return False
     content = row.get("message", {}).get("content")
-    return isinstance(content, str) and content.strip() != ""
+    if not isinstance(content, str) or content.strip() == "":
+        return False
+    return not any(marker in content for marker in SYSTEM_EVENT_MARKERS)
 
 
 def assistant_text(row: dict) -> str:
@@ -244,8 +252,17 @@ def handle_backfill(transcript: str, skip_last_response: bool = False) -> None:
         elif row.get("type") == "assistant" and pairs:
             pairs[-1][1].append(row)
 
-    num = 0
+    # Never rewrite what is already on disk: entries whose prompt timestamp is
+    # already recorded are left exactly as they were, and only missing
+    # exchanges are appended. Backfill is additive, never destructive.
+    existing = log_path(session_id)
+    recorded = existing.read_text(encoding="utf-8") if existing.exists() else ""
+
+    num = next_num(session_id, "PROMPT") - 1
     for index, (prompt_row, assistant_rows) in enumerate(pairs):
+        prompt_ts = prompt_row.get("timestamp", "")
+        if prompt_ts and prompt_ts in recorded:
+            continue
         num += 1
         is_last = index == len(pairs) - 1
         model = next(

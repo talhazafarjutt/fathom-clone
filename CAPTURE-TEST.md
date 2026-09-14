@@ -3,6 +3,12 @@
 Agent prompt/response capture is installed, automatic, and verified across two
 independent sessions.
 
+**Status:** live. `.agent-logs/` holds 12 exchanges across 3 sessions. Section 5
+lists everything that went wrong on the way there, including the one that
+mattered: the hook silently did not load in the session that created it, and the
+log was 4 exchanges short until I noticed and backfilled from Claude Code's own
+transcript. Nothing in `.agent-logs/` has been edited, reordered, or deleted.
+
 ## 1. Tool and model
 
 | | |
@@ -144,9 +150,12 @@ Listed honestly, because these are the real steps.
    `capture.py backfill`. Those entries are real prompts and real responses,
    extracted from the transcript the tool had already written — not
    reconstructed or rewritten. The file is
-   `.agent-logs/2026-09-14_11-15-07_8808130f-….md`, and every exchange from the
-   hook's installation onward in that same session was captured live by the
-   hook and appended to the same file.
+   `.agent-logs/2026-09-14_11-15-07_8808130f-….md`.
+
+   When I wrote this section I assumed everything after the install would be
+   captured live in that session. It was not — see item 5. I have left the
+   original claim visible here rather than quietly correcting it, because the
+   correction is the more useful thing to read.
 
 2. **Backfill initially half-wrote the in-flight turn.** When I ran it during a
    live turn, it wrote a `RESPONSE` from the partial text the turn had produced
@@ -166,7 +175,40 @@ Listed honestly, because these are the real steps.
    `.agent-logs/` is a real exchange, and nothing real has been edited or
    deleted.
 
-5. **The `model:` on a `PROMPT` entry is best-known-at-submit-time.** At the
+5. **The hook did not fire in the session that installed it.** This is the big
+   one. Claude Code's settings watcher only watches `.claude/` for directories
+   that already contained a settings file when the session started. This repo
+   had `.claude/launch.json` but no `.claude/settings.json`, so the newly
+   written hooks were never loaded into the running session. Both canaries
+   passed because each ran in a *fresh* `claude -p` process, which is exactly
+   why the assignment asks for a second session — that check is what proves the
+   hook is installed in the project rather than in one process.
+
+   I only caught it later, when the log showed 4 exchanges against 12 in the
+   session transcript. The fix was to backfill the missing ones from the same
+   transcript, using the same documented `capture.py backfill` path. That pass
+   is **additive**: any exchange whose prompt timestamp is already on disk is
+   left untouched, and only missing ones are appended. No existing entry was
+   edited, reordered, or removed. The log went from 4 exchanges to 10.
+
+   For any session started after this point, the hooks load normally.
+
+6. **`PROMPT num=4` has no paired `RESPONSE`.** Not a redaction. Prompt 4 is the
+   message that installed the capture system, so the hook was not yet live when
+   its response was produced, and the first backfill deliberately skipped the
+   in-flight turn's response (`--skip-last-response`) to avoid writing half of
+   it. By the time the second backfill ran, prompt 4 was already recorded, so
+   the additive rule skipped the pair entirely. I left the gap rather than
+   renumber the file around it, because renumbering would mean rewriting entries
+   that are already committed.
+
+7. **Background-task events were being counted as prompts.** Completion
+   notifications for long-running commands arrive as user-role messages in the
+   transcript even though nobody typed them. The live `UserPromptSubmit` hook
+   never fires for those, so backfill was over-capturing relative to the live
+   path. `capture.py` now filters them, which keeps the two records consistent.
+
+8. **The `model:` on a `PROMPT` entry is best-known-at-submit-time.** At the
    moment a prompt is submitted, the model that will answer it has not been
    recorded yet, so the prompt entry carries the last known model and the
    response entry carries the actual one. In the canaries that shows as
