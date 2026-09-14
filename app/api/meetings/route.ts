@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { requireUserApi } from "@/lib/session";
+import { isAcceptedUpload, supportedFormatsMessage } from "@/lib/media";
 import { buildKey, createUploadTarget } from "@/lib/storage";
 
 const CreateSchema = z.object({
@@ -21,6 +22,15 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Invalid request", issues: parsed.error.issues }, { status: 400 });
   }
   const { filename, contentType, sizeBytes, source, title } = parsed.data;
+
+  // Reject formats we cannot handle before a large file is uploaded and stored,
+  // rather than failing at the transcription provider minutes later.
+  if (!isAcceptedUpload(filename)) {
+    return NextResponse.json(
+      { error: `That file type is not supported. ${supportedFormatsMessage()}` },
+      { status: 415 },
+    );
+  }
 
   const meeting = await db.meeting.create({
     data: {

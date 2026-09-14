@@ -1,5 +1,5 @@
 import { createWriteStream } from "node:fs";
-import { mkdir, stat } from "node:fs/promises";
+import { mkdir, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -80,6 +80,24 @@ export async function writeLocalObject(key: string, body: ReadableStream | Reada
   await pipeline(source, createWriteStream(dest));
   const { size } = await stat(dest);
   return { size };
+}
+
+/** Write bytes we generated ourselves (e.g. a transcoded audio track). */
+export async function putObject(key: string, body: Buffer, contentType: string) {
+  if (storageDriver === "local") {
+    const dest = path.join(LOCAL_ROOT, key);
+    await mkdir(path.dirname(dest), { recursive: true });
+    await writeFile(dest, body);
+    return;
+  }
+  await r2().send(
+    new PutObjectCommand({
+      Bucket: required("R2_BUCKET"),
+      Key: key,
+      Body: body,
+      ContentType: contentType,
+    }),
+  );
 }
 
 export function localObjectPath(key: string) {

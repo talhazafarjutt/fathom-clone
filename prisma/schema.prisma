@@ -104,6 +104,9 @@ model Meeting {
 
   // media
   storageKey  String?
+  // transcoded audio track, when the upload was a video or an unsupported
+  // container; this is what the player streams
+  audioKey    String?
   mimeType    String?
   sizeBytes   Int?
   durationSec Int?

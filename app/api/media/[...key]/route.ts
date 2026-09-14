@@ -29,8 +29,8 @@ export async function GET(req: Request, ctx: { params: Promise<{ key: string[] }
   }
 
   const meeting = await db.meeting.findFirst({
-    where: { storageKey: key },
-    select: { userId: true, shareToken: true, mimeType: true },
+    where: { OR: [{ storageKey: key }, { audioKey: key }] },
+    select: { userId: true, shareToken: true, mimeType: true, audioKey: true },
   });
   if (!meeting) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
@@ -48,7 +48,8 @@ export async function GET(req: Request, ctx: { params: Promise<{ key: string[] }
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  const contentType = meeting.mimeType || "application/octet-stream";
+  const contentType =
+    meeting.audioKey === key ? "audio/mpeg" : meeting.mimeType || "application/octet-stream";
   const range = req.headers.get("range");
 
   if (range) {

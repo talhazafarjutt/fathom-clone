@@ -61,7 +61,10 @@ export async function loadMeetingView(where: { id: string; userId: string } | { 
     citations: (m.citations as unknown as CitationView[]) ?? [],
   }));
 
-  const playbackUrl = meeting.storageKey ? await getPlaybackUrl(meeting.storageKey) : "";
+  // audioKey exists when the upload was a video or an unsupported container;
+  // browsers cannot play a .mkv in an <audio> element, the extracted track they can.
+  const playbackKey = meeting.audioKey ?? meeting.storageKey;
+  const playbackUrl = playbackKey ? await getPlaybackUrl(playbackKey) : "";
 
   return {
     meeting,

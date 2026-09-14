@@ -45,7 +45,10 @@ ENV NEXT_TELEMETRY_DISABLED=1
 ENV PORT=3000
 ENV HOSTNAME=0.0.0.0
 
-RUN addgroup -g 1001 -S nodejs && adduser -S nextjs -u 1001
+# ffmpeg extracts an audio track from video uploads and from containers the
+# transcription provider does not accept.
+RUN apk add --no-cache ffmpeg \
+ && addgroup -g 1001 -S nodejs && adduser -S nextjs -u 1001
 
 # Next's standalone output: server + only the dependencies it actually traced.
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./

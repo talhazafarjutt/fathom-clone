@@ -1,9 +1,12 @@
 import { createReadStream } from "node:fs";
-import { stat } from "node:fs/promises";
+import { readFile, stat, writeFile } from "node:fs/promises";
+import path from "node:path";
 import { AssemblyAI } from "assemblyai";
 import { toFile } from "groq-sdk";
 import { inferSpeakers } from "@/lib/ai/diarize";
 import { groq } from "@/lib/ai/providers";
+import { extensionOf, needsTranscode, supportedFormatsMessage } from "@/lib/media";
+import { ffmpegAvailable, makeTempDir, transcodeToMp3 } from "@/lib/media-server";
 import {
   getProviderReadUrl,
   localObjectPath,
@@ -24,6 +27,8 @@ export type CompletedTranscript = {
   durationSec: number | null;
   /** true when speaker labels were guessed by an LLM rather than measured */
   speakersInferred: boolean;
+  /** set when the upload had to be transcoded; the caller stores it for playback */
+  transcodedAudio?: { buffer: Buffer; extension: string; contentType: string };
 };
 
 export type TranscriptResult =
@@ -55,6 +60,10 @@ const GROQ_WHISPER_MODEL = process.env.GROQ_WHISPER_MODEL || "whisper-large-v3";
 
 // Groq caps uploads at 25 MB on the free tier, 100 MB on the dev tier.
 const GROQ_MAX_BYTES = Number(process.env.GROQ_AUDIO_MAX_BYTES || 25 * 1024 * 1024);
+
+// Ceilings on merging Whisper segments into one transcript line.
+const MAX_MERGED_MS = 25_000;
+const MAX_MERGED_CHARS = 320;
 
 let assembly: AssemblyAI | null = null;
 
@@ -140,7 +149,18 @@ export async function fetchTranscription(id: string): Promise<TranscriptResult> 
 
 /** One call: transcribe, then infer speaker turns from the text. */
 export async function transcribeWithGroq(storageKey: string): Promise<CompletedTranscript> {
-  const file = await loadAudioForGroq(storageKey);
+  const { file, transcodedAudio, cleanup } = await loadAudioForGroq(storageKey);
+  try {
+    return await runGroqTranscription(file, transcodedAudio);
+  } finally {
+    await cleanup();
+  }
+}
+
+async function runGroqTranscription(
+  file: Awaited<ReturnType<typeof toFile>>,
+  transcodedAudio: CompletedTranscript["transcodedAudio"],
+): Promise<CompletedTranscript> {
 
   const response = (await groq().audio.transcriptions.create({
     file,
@@ -164,6 +184,7 @@ export async function transcribeWithGroq(storageKey: string): Promise<CompletedT
 
   if (raw.length === 0) {
     return {
+      transcodedAudio,
       status: "completed",
       utterances: response.text
         ? [
@@ -186,12 +207,21 @@ export async function transcribeWithGroq(storageKey: string): Promise<CompletedT
   );
   const speakerByIdx = new Map(speakers.map((s) => [s.idx, s.speaker]));
 
-  // merge consecutive Whisper segments that belong to the same speaker turn
+  // Merge consecutive Whisper segments from the same speaker into readable
+  // lines — but cap it. A one-speaker recording would otherwise collapse into a
+  // single unclickable wall of text, and the timestamps are the whole point:
+  // they drive seeking, follow-along highlighting, and search snippets.
   const utterances: Utterance[] = [];
   raw.forEach((segment, idx) => {
     const speaker = speakerByIdx.get(idx) ?? "A";
     const previous = utterances.at(-1);
-    if (previous && previous.speaker === speaker) {
+    const canMerge =
+      previous &&
+      previous.speaker === speaker &&
+      segment.endMs - previous.startMs <= MAX_MERGED_MS &&
+      previous.text.length + segment.text.length <= MAX_MERGED_CHARS;
+
+    if (canMerge) {
       previous.endMs = segment.endMs;
       previous.text = `${previous.text} ${segment.text}`.trim();
     } else {
@@ -200,6 +230,7 @@ export async function transcribeWithGroq(storageKey: string): Promise<CompletedT
   });
 
   return {
+    transcodedAudio,
     status: "completed",
     utterances,
     durationSec: response.duration ?? raw.at(-1)!.endMs / 1000,
@@ -207,34 +238,77 @@ export async function transcribeWithGroq(storageKey: string): Promise<CompletedT
   };
 }
 
+/**
+ * Produce a file Groq will accept: the original when it is already a supported
+ * audio format of a workable size, otherwise an ffmpeg-extracted MP3.
+ */
 async function loadAudioForGroq(storageKey: string) {
-  if (storageDriver === "local") {
-    const path = localObjectPath(storageKey);
-    const { size } = await stat(path);
-    assertSize(size);
-    return toFile(createReadStream(path), basename(storageKey));
-  }
+  const temp = await makeTempDir();
+  try {
+    const sourceName = basename(storageKey);
+    let sourcePath: string;
+    let sizeBytes: number;
 
-  const url = await getProviderReadUrl(storageKey);
-  if (!url) throw new Error("Could not resolve a provider-readable URL");
+    if (storageDriver === "local") {
+      sourcePath = localObjectPath(storageKey);
+      ({ size: sizeBytes } = await stat(sourcePath));
+    } else {
+      const url = await getProviderReadUrl(storageKey);
+      if (!url) throw new Error("Could not resolve a provider-readable URL");
+      const response = await fetch(url);
+      if (!response.ok) {
+        throw new Error(`Could not read media from storage (${response.status})`);
+      }
+      const buffer = Buffer.from(await response.arrayBuffer());
+      sizeBytes = buffer.byteLength;
+      sourcePath = path.join(temp.dir, sourceName);
+      await writeFile(sourcePath, buffer);
+    }
 
-  const response = await fetch(url);
-  if (!response.ok) throw new Error(`Could not read media from storage (${response.status})`);
-  const buffer = Buffer.from(await response.arrayBuffer());
-  assertSize(buffer.byteLength);
+    if (!needsTranscode(sourceName, sizeBytes, GROQ_MAX_BYTES)) {
+      return {
+        file: await toFile(createReadStream(sourcePath), sourceName),
+        transcodedAudio: undefined,
+        cleanup: temp.cleanup,
+      };
+    }
 
-  return toFile(buffer, basename(storageKey));
-}
+    if (!(await ffmpegAvailable())) {
+      throw new Error(
+        `This recording is a .${extensionOf(sourceName)} file${
+          sizeBytes > GROQ_MAX_BYTES ? " and is over the provider's size limit" : ""
+        }, and ffmpeg is not installed on the server to convert it. ` +
+          `Convert it to MP3 first, or run the app with ffmpeg available. ${supportedFormatsMessage()}`,
+      );
+    }
 
-function assertSize(bytes: number) {
-  if (bytes > GROQ_MAX_BYTES) {
-    throw new Error(
-      `Recording is ${(bytes / 1024 / 1024).toFixed(1)} MB; Groq accepts up to ${(
-        GROQ_MAX_BYTES /
-        1024 /
-        1024
-      ).toFixed(0)} MB. Use TRANSCRIBE_PROVIDER=assemblyai for longer meetings.`,
-    );
+    const outputPath = path.join(temp.dir, "audio.mp3");
+    await transcodeToMp3(sourcePath, outputPath);
+    const buffer = await readFile(outputPath);
+
+    if (buffer.byteLength > GROQ_MAX_BYTES) {
+      throw new Error(
+        `Even after extracting the audio this recording is ${(
+          buffer.byteLength /
+          1024 /
+          1024
+        ).toFixed(1)} MB, over the ${(GROQ_MAX_BYTES / 1024 / 1024).toFixed(0)} MB limit. ` +
+          "Use TRANSCRIBE_PROVIDER=assemblyai for meetings this long.",
+      );
+    }
+
+    return {
+      file: await toFile(buffer, "audio.mp3"),
+      transcodedAudio: {
+        buffer,
+        extension: "mp3",
+        contentType: "audio/mpeg",
+      },
+      cleanup: temp.cleanup,
+    };
+  } catch (error) {
+    await temp.cleanup();
+    throw error;
   }
 }
 

@@ -9,6 +9,7 @@ import {
   transcriptionProvider,
   type CompletedTranscript,
 } from "@/lib/transcribe";
+import { putObject } from "@/lib/storage";
 import { parseTimestamp } from "@/lib/transcript";
 import type { MeetingStatus } from "@/lib/generated/prisma/enums";
 
@@ -157,6 +158,18 @@ export async function advanceMeeting(meetingId: string): Promise<MeetingStatus> 
 }
 
 async function writeTranscript(meetingId: string, result: CompletedTranscript) {
+  // A video or unsupported container was transcoded on the way to the provider.
+  // Keep that audio: it is what the player can actually stream.
+  let audioKey: string | undefined;
+  if (result.transcodedAudio) {
+    audioKey = `meetings/${meetingId}/audio.${result.transcodedAudio.extension}`;
+    await putObject(
+      audioKey,
+      result.transcodedAudio.buffer,
+      result.transcodedAudio.contentType,
+    );
+  }
+
   await db.$transaction([
     db.transcriptSegment.deleteMany({ where: { meetingId } }),
     db.transcriptSegment.createMany({
@@ -176,6 +189,7 @@ async function writeTranscript(meetingId: string, result: CompletedTranscript) {
         status: "SUMMARIZING",
         durationSec: result.durationSec ? Math.round(result.durationSec) : null,
         speakersInferred: result.speakersInferred,
+        ...(audioKey ? { audioKey } : {}),
       },
     }),
   ]);

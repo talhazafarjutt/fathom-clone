@@ -8,9 +8,12 @@ import { Button } from "@/components/ui/button";
 import { Card, CardBody } from "@/components/ui/card";
 import { Spinner } from "@/components/ui/spinner";
 import { createAndUpload } from "@/lib/upload-client";
+import {
+  ACCEPT_ATTRIBUTE,
+  isAcceptedUpload,
+  supportedFormatsMessage,
+} from "@/lib/media";
 import { cn } from "@/lib/utils";
-
-const ACCEPT = "audio/*,video/*";
 
 export function NewMeeting() {
   const router = useRouter();
@@ -41,6 +44,12 @@ export function NewMeeting() {
 
   function onFile(file: File | undefined) {
     if (!file) return;
+    // Check here too, so a wrong file never starts a multi-megabyte upload.
+    if (!isAcceptedUpload(file.name)) {
+      setError(`${file.name} is not a supported format. ${supportedFormatsMessage()}`);
+      return;
+    }
+    setError(null);
     void submit(file, file.name, file.type || "application/octet-stream", "UPLOAD");
   }
 
@@ -86,7 +95,8 @@ export function NewMeeting() {
               <div className="space-y-1">
                 <p className="text-sm font-medium">Drop an audio or video file</p>
                 <p className="text-sm text-muted">
-                  mp3, m4a, wav, mp4, webm — or record the call right here.
+                  mp3, m4a, wav, mp4, webm, mkv, mov — or record the call right here.
+                  Video files are converted to audio automatically.
                 </p>
               </div>
               <div className="flex flex-wrap items-center justify-center gap-3">
@@ -98,7 +108,7 @@ export function NewMeeting() {
               <input
                 ref={inputRef}
                 type="file"
-                accept={ACCEPT}
+                accept={ACCEPT_ATTRIBUTE}
                 className="hidden"
                 onChange={(e) => onFile(e.target.files?.[0] ?? undefined)}
               />
