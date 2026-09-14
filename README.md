@@ -20,12 +20,19 @@ call — with answers that cite the exact second they came from.
 The app ships with a seeded meeting so you never look at an empty list.
 
 ```bash
-npm install && npm run db:up && npm run db:migrate && npm run db:seed && npm run dev
+npm install && npm run db:up && npm run db:migrate && npm run dev
 ```
 
-Then open http://localhost:3000, sign up, and you land on a dashboard with a real
-six-minute sales call already processed: transcript, summary, five action items, and a
-chat you can ask questions in.
+Open http://localhost:3000 and **sign up first** — the seed attaches its demo meeting to
+an existing account, so it exits with an error if no user exists yet. Then:
+
+```bash
+npm run db:seed
+```
+
+Refresh, and the dashboard has a real five-minute sales call already processed: a
+26-line diarized transcript, summary with chapters, five action items, and a chat you
+can ask questions in.
 
 The seeded call's audio is silent on purpose — the repo does not ship a media file. The
 transcript, the timeline, and the seek behaviour are all real.
@@ -308,6 +315,7 @@ app/
     action-items/[id]/route.ts  PATCH: tick an action item off
     upload/route.ts             local-disk upload (unused when storage is R2)
     media/[...key]/route.ts     serves local media with HTTP range support so seeking works
+    health/route.ts             liveness + database reachability, used by Docker and Render
 
 components/
   auth-form.tsx                 sign-in and sign-up form
@@ -333,10 +341,11 @@ lib/
   auth.ts / auth-client.ts      Better Auth server and browser clients
   session.ts                    getSession, requireUser, requireUserApi
   pipeline.ts                   the QUEUED → READY state machine
-  transcribe.ts                 AssemblyAI: submit and fetch
-  ai/anthropic.ts               Claude client and model id
+  transcribe.ts                 AssemblyAI (async) and Groq Whisper (sync) drivers
+  ai/providers.ts               provider selection, both clients, strict-schema helper
   ai/summarize.ts               the Zod schema and the summarization call
   ai/chat.ts                    streaming chat + timestamp citation extraction
+  ai/diarize.ts                 infers speaker turns when Whisper gives none
   storage.ts                    local-disk and R2 drivers behind one interface
   search.ts                     the full-text search query
   transcript.ts                 timestamp formatting/parsing, transcript rendering
@@ -349,6 +358,13 @@ prisma/
   schema.prisma                 the data model
   migrations/                   checked-in SQL, including the full-text indexes
   seed.ts                       the demo meeting
+
+Dockerfile                      multi-stage build: deps, migrator, builder, runner
+docker-entrypoint.sh            applies migrations, then starts the server
+docker-compose.yml              Postgres, plus the app behind the `app` profile
+render.yaml                     Render blueprint: web service, database, disk, health check
+vercel.json                     build command and per-route function limits
+.github/workflows/              ci.yml (verify + docker) and deploy.yml (migrate + deploy)
 
 .claude/
   settings.json                 the agent capture hooks
@@ -595,6 +611,7 @@ transcript.
   occasional merged or split speaker — which is the main reason the speaker→name map is a
   first-class, editable field rather than baked into each segment. On the Groq path,
   speaker labels are inferred rather than measured and are flagged as such.
-- Groq caps audio uploads at 25 MB (free) or 100 MB (dev tier), which is roughly an hour
-  of compressed audio. Longer meetings need AssemblyAI, or chunking that is not built yet.
+- Groq caps audio uploads at 25 MB (free tier) or 100 MB (dev tier). At typical
+  compressed bitrates that is roughly 25-50 minutes on the free tier, and much less for
+  uncompressed WAV. Longer meetings need AssemblyAI, or chunking that is not built yet.
 - Uploads are capped at 2 GB by the create endpoint's validation.

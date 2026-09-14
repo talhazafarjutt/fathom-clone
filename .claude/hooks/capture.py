@@ -236,7 +236,50 @@ def handle_response(payload: dict) -> None:
     append_entry(session_id, "RESPONSE", num, now_iso(), current_model(rows), body)
 
 
-def handle_backfill(transcript: str, skip_last_response: bool = False) -> None:
+def rebuild_file(session_id: str, pairs, skip_last_response: bool) -> str:
+    """Render the whole session file from the transcript, in order."""
+    short = session_id[:8]
+    first_ts = pairs[0][0].get("timestamp", now_iso()) if pairs else now_iso()
+    last_ts = pairs[-1][0].get("timestamp", now_iso()) if pairs else now_iso()
+    model = "claude-opus-5"
+
+    body = (
+        f"# Session Log - {first_ts[:10]}\n\n"
+        f"Session: `{short}` | Project: `{PROJECT}` | Author: `{AUTHOR}`\n\n"
+        "---\n\n"
+    )
+
+    for index, (prompt_row, assistant_rows) in enumerate(pairs):
+        num = index + 1
+        model = next(
+            (r.get("message", {}).get("model") for r in assistant_rows if r.get("message", {}).get("model")),
+            model,
+        )
+        body += (
+            f"[LOG_ENTRY type=PROMPT num={num} session={short}]\n"
+            f"timestamp: {prompt_row.get('timestamp', now_iso())}\n"
+            f"model: {model}\n\n"
+            f"{prompt_row['message']['content'].rstrip()}\n\n\n"
+        )
+        if index == len(pairs) - 1 and skip_last_response:
+            continue
+        text = "\n\n".join(
+            t.strip() for t in (assistant_text(r) for r in assistant_rows) if t.strip()
+        )
+        if not text:
+            continue
+        ts = assistant_rows[-1].get("timestamp", now_iso())
+        body += (
+            f"[LOG_ENTRY type=RESPONSE num={num} session={short}]\n"
+            f"timestamp: {ts}\n"
+            f"model: {model}\n\n"
+            f"{text.rstrip()}\n\n\n"
+        )
+
+    return build_frontmatter(session_id, model, len(pairs), first_ts, last_ts) + body
+
+
+def handle_backfill(transcript: str, skip_last_response: bool = False, rebuild: bool = False) -> None:
     """Rebuild prompt/response pairs from a transcript written before the hook existed.
 
     `skip_last_response` leaves the in-flight turn's response to the live Stop
@@ -257,6 +300,24 @@ def handle_backfill(transcript: str, skip_last_response: bool = False) -> None:
     # exchanges are appended. Backfill is additive, never destructive.
     existing = log_path(session_id)
     recorded = existing.read_text(encoding="utf-8") if existing.exists() else ""
+
+    if rebuild:
+        # Repair mode, for when the additive path cannot reach a gap (a response
+        # whose prompt is already recorded). Rewrites the file from the same
+        # transcript so every exchange is present and in order. It refuses to
+        # run if that would lose any prompt already on disk, so a rebuild can
+        # only ever add.
+        rebuilt = rebuild_file(session_id, pairs, skip_last_response)
+        for prompt_row, _ in pairs:
+            body = prompt_row["message"]["content"].strip()
+            if body and body in recorded and body not in rebuilt:
+                raise SystemExit("refusing to rebuild: would drop an existing prompt")
+        for body in re.findall(r"^\[LOG_ENTRY type=PROMPT.*?\n\n(.*?)\n\n\n", recorded, re.S | re.M):
+            if body.strip() and body.strip() not in rebuilt:
+                raise SystemExit("refusing to rebuild: would drop an existing entry")
+        existing.write_text(rebuilt, encoding="utf-8")
+        print(f"rebuilt {existing} with {len(pairs)} exchanges")
+        return
 
     num = next_num(session_id, "PROMPT") - 1
     for index, (prompt_row, assistant_rows) in enumerate(pairs):
@@ -296,7 +357,11 @@ def main() -> int:
         if len(sys.argv) < 3:
             print("usage: capture.py backfill <transcript.jsonl> [--skip-last-response]", file=sys.stderr)
             return 1
-        handle_backfill(sys.argv[2], "--skip-last-response" in sys.argv[3:])
+        handle_backfill(
+            sys.argv[2],
+            "--skip-last-response" in sys.argv[3:],
+            "--rebuild" in sys.argv[3:],
+        )
         return 0
 
     try:

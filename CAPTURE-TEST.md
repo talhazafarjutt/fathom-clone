@@ -3,11 +3,16 @@
 Agent prompt/response capture is installed, automatic, and verified across two
 independent sessions.
 
-**Status:** live. `.agent-logs/` holds 12 exchanges across 3 sessions. Section 5
+**Status:** live. `.agent-logs/` holds 14 prompts and 13 responses across 3 sessions. Section 5
 lists everything that went wrong on the way there, including the one that
 mattered: the hook silently did not load in the session that created it, and the
 log was 4 exchanges short until I noticed and backfilled from Claude Code's own
-transcript. Nothing in `.agent-logs/` has been edited, reordered, or deleted.
+transcript.
+
+Every prompt and response in `.agent-logs/` is verbatim from that transcript.
+None has been reworded, summarised, or removed. One file was regenerated in full
+to close gaps the append-only path could not reach — item 6 below explains
+exactly what that changed and what it did not.
 
 ## 1. Tool and model
 
@@ -172,8 +177,7 @@ Listed honestly, because these are the real steps.
    pipe-test-0001`), which produced a log file for a session that never
    happened. I deleted that one file because it would have misrepresented the
    record; it contained no real prompt or response. Every remaining entry in
-   `.agent-logs/` is a real exchange, and nothing real has been edited or
-   deleted.
+   `.agent-logs/` is a real exchange taken verbatim from the transcript.
 
 5. **The hook did not fire in the session that installed it.** This is the big
    one. Claude Code's settings watcher only watches `.claude/` for directories
@@ -193,14 +197,22 @@ Listed honestly, because these are the real steps.
 
    For any session started after this point, the hooks load normally.
 
-6. **`PROMPT num=4` has no paired `RESPONSE`.** Not a redaction. Prompt 4 is the
-   message that installed the capture system, so the hook was not yet live when
-   its response was produced, and the first backfill deliberately skipped the
-   in-flight turn's response (`--skip-last-response`) to avoid writing half of
-   it. By the time the second backfill ran, prompt 4 was already recorded, so
-   the additive rule skipped the pair entirely. I left the gap rather than
-   renumber the file around it, because renumbering would mean rewriting entries
-   that are already committed.
+6. **Three responses were missing, and the append-only path could not reach
+   them.** Prompts 4, 10 and 11 had no paired `RESPONSE`. Each was an in-flight
+   turn when a backfill ran, so `--skip-last-response` correctly declined to
+   write a half-finished answer — but once the prompt was on disk, the additive
+   rule skipped the whole pair forever and the response could never be added.
+
+   I added a `--rebuild` mode that regenerates the session file from the same
+   transcript so that every exchange is present and in chronological order. It
+   is guarded: it compares the regenerated text against what is already on disk
+   and aborts rather than write, if any existing prompt or entry would be lost.
+
+   What that changed: 11 prompts → 12, 8 responses → 11. What it did not change:
+   the wording of anything. I diffed the file before and after and confirmed all
+   11 previously-recorded prompts appear byte-for-byte in the new file. The only
+   remaining unpaired entry is the final prompt, whose response had not been
+   produced yet when the rebuild ran.
 
 7. **Background-task events were being counted as prompts.** Completion
    notifications for long-running commands arrive as user-role messages in the
