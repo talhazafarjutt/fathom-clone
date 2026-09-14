@@ -1,0 +1,208 @@
+// Fathom clone — meeting intelligence
+// Docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client"
+  output   = "../lib/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------------------------------------------------------------------------
+// Auth (better-auth)
+// ---------------------------------------------------------------------------
+
+model User {
+  id            String    @id
+  name          String
+  email         String    @unique
+  emailVerified Boolean   @default(false)
+  image         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  sessions Session[]
+  accounts Account[]
+  meetings Meeting[]
+
+  @@map("user")
+}
+
+model Session {
+  id        String   @id
+  token     String   @unique
+  userId    String
+  expiresAt DateTime
+  ipAddress String?
+  userAgent String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("session")
+}
+
+model Account {
+  id                    String    @id
+  accountId             String
+  providerId            String
+  userId                String
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("account")
+}
+
+model Verification {
+  id         String   @id
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@map("verification")
+}
+
+// ---------------------------------------------------------------------------
+// Meetings
+// ---------------------------------------------------------------------------
+
+enum MeetingStatus {
+  UPLOADING
+  QUEUED
+  TRANSCRIBING
+  SUMMARIZING
+  READY
+  FAILED
+}
+
+enum MeetingSource {
+  UPLOAD
+  RECORDING
+  BOT
+}
+
+model Meeting {
+  id       String        @id @default(cuid())
+  userId   String
+  title    String        @default("Untitled meeting")
+  status   MeetingStatus @default(UPLOADING)
+  source   MeetingSource @default(UPLOAD)
+
+  // media
+  storageKey  String?
+  mimeType    String?
+  sizeBytes   Int?
+  durationSec Int?
+
+  // provider bookkeeping
+  transcriptId String? // AssemblyAI transcript id
+  error        String?
+
+  // { "A": "Talha Zafar" } — user-assigned names for diarized speakers
+  speakerNames Json @default("{}")
+
+  // sharing
+  shareToken String?   @unique
+  sharedAt   DateTime?
+
+  startedAt DateTime @default(now())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user        User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  segments    TranscriptSegment[]
+  summary     Summary?
+  actionItems ActionItem[]
+  messages    ChatMessage[]
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([status])
+  @@map("meeting")
+}
+
+model TranscriptSegment {
+  id        String @id @default(cuid())
+  meetingId String
+  idx       Int
+  speaker   String @default("A")
+  startMs   Int
+  endMs     Int
+  text      String
+  // 0..1 provider confidence
+  confidence Float?
+
+  meeting Meeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+
+  @@unique([meetingId, idx])
+  @@index([meetingId, startMs])
+  @@map("transcript_segment")
+}
+
+model Summary {
+  id        String   @id @default(cuid())
+  meetingId String   @unique
+  tldr      String
+  bullets   String[]
+  // [{ title, summary, startMs }]
+  topics    Json     @default("[]")
+  // [{ question, answer, startMs }]
+  questions Json     @default("[]")
+  keywords  String[]
+  model     String?
+  createdAt DateTime @default(now())
+
+  meeting Meeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+
+  @@map("summary")
+}
+
+model ActionItem {
+  id        String    @id @default(cuid())
+  meetingId String
+  idx       Int
+  text      String
+  assignee  String?
+  dueDate   String? // free-form ("next Friday") — LLM output, not normalized
+  startMs   Int?
+  done      Boolean   @default(false)
+  createdAt DateTime  @default(now())
+
+  meeting Meeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+
+  @@index([meetingId, idx])
+  @@map("action_item")
+}
+
+enum ChatRole {
+  USER
+  ASSISTANT
+}
+
+model ChatMessage {
+  id        String   @id @default(cuid())
+  meetingId String
+  role      ChatRole
+  content   String
+  // [{ startMs, endMs, speaker, text }]
+  citations Json     @default("[]")
+  createdAt DateTime @default(now())
+
+  meeting Meeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+
+  @@index([meetingId, createdAt])
+  @@map("chat_message")
+}
