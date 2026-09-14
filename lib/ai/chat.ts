@@ -1,5 +1,11 @@
 import type Anthropic from "@anthropic-ai/sdk";
-import { anthropic, MODEL } from "@/lib/ai/anthropic";
+import {
+  ANTHROPIC_MODEL,
+  GROQ_MODEL,
+  anthropic,
+  groq,
+  llmProvider,
+} from "@/lib/ai/providers";
 import { parseTimestamp, renderTranscript, type SegmentLike } from "@/lib/transcript";
 
 const SYSTEM_RULES = `You answer questions about a single recorded meeting, using only its transcript.
@@ -35,44 +41,23 @@ export function streamMeetingAnswer(opts: {
   onError?: (error: unknown) => Promise<void> | void;
 }): ReadableStream<Uint8Array> {
   const transcript = renderTranscript(opts.segments, opts.speakerNames);
-
-  const system: Anthropic.TextBlockParam[] = [
-    { type: "text", text: SYSTEM_RULES },
-    {
-      type: "text",
-      text: `<transcript>\n${transcript}\n</transcript>`,
-      // The transcript is identical on every follow-up question — cache it.
-      cache_control: { type: "ephemeral" },
-    },
-  ];
-
-  const messages: Anthropic.MessageParam[] = [
-    ...opts.history.map((t) => ({ role: t.role, content: t.content })),
-    { role: "user" as const, content: opts.question },
-  ];
-
   const encoder = new TextEncoder();
 
   return new ReadableStream<Uint8Array>({
     async start(controller) {
       let full = "";
-      try {
-        const stream = anthropic().messages.stream({
-          model: MODEL,
-          max_tokens: 8000,
-          system,
-          messages,
-        });
+      const push = (text: string) => {
+        full += text;
+        controller.enqueue(encoder.encode(text));
+      };
 
-        for await (const event of stream) {
-          if (
-            event.type === "content_block_delta" &&
-            event.delta.type === "text_delta"
-          ) {
-            full += event.delta.text;
-            controller.enqueue(encoder.encode(event.delta.text));
-          }
-        }
+      try {
+        const deltas =
+          llmProvider() === "groq"
+            ? groqDeltas(transcript, opts.history, opts.question)
+            : claudeDeltas(transcript, opts.history, opts.question);
+
+        for await (const delta of deltas) push(delta);
 
         await opts.onDone?.(full);
         controller.close();
@@ -85,4 +70,59 @@ export function streamMeetingAnswer(opts: {
       }
     },
   });
+}
+
+async function* groqDeltas(
+  transcript: string,
+  history: ChatTurn[],
+  question: string,
+): AsyncGenerator<string> {
+  const stream = await groq().chat.completions.create({
+    model: GROQ_MODEL,
+    stream: true,
+    temperature: 0.3,
+    max_completion_tokens: 4000,
+    messages: [
+      { role: "system", content: `${SYSTEM_RULES}\n\n<transcript>\n${transcript}\n</transcript>` },
+      ...history.map((turn) => ({ role: turn.role, content: turn.content })),
+      { role: "user" as const, content: question },
+    ],
+  });
+
+  for await (const chunk of stream) {
+    const delta = chunk.choices[0]?.delta?.content;
+    if (delta) yield delta;
+  }
+}
+
+async function* claudeDeltas(
+  transcript: string,
+  history: ChatTurn[],
+  question: string,
+): AsyncGenerator<string> {
+  const system: Anthropic.TextBlockParam[] = [
+    { type: "text", text: SYSTEM_RULES },
+    {
+      type: "text",
+      text: `<transcript>\n${transcript}\n</transcript>`,
+      // The transcript is identical on every follow-up question — cache it.
+      cache_control: { type: "ephemeral" },
+    },
+  ];
+
+  const stream = anthropic().messages.stream({
+    model: ANTHROPIC_MODEL,
+    max_tokens: 8000,
+    system,
+    messages: [
+      ...history.map((turn) => ({ role: turn.role, content: turn.content })),
+      { role: "user" as const, content: question },
+    ],
+  });
+
+  for await (const event of stream) {
+    if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
+      yield event.delta.text;
+    }
+  }
 }

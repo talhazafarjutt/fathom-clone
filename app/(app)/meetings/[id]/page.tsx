@@ -53,6 +53,7 @@ export default async function MeetingPage({
           actionItems={data.actionItems}
           chatMessages={data.chatMessages}
           durationSec={meeting.durationSec}
+          speakersInferred={meeting.speakersInferred}
           startAtSec={Number.isFinite(startAtSec) ? startAtSec : undefined}
         />
       ) : (

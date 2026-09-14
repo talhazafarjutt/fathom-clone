@@ -1,6 +1,14 @@
 import { db } from "@/lib/db";
+import { activeModel } from "@/lib/ai/providers";
 import { summarizeMeeting } from "@/lib/ai/summarize";
-import { fetchTranscription, submitTranscription } from "@/lib/transcribe";
+import {
+  fetchTranscription,
+  isAsyncTranscription,
+  submitTranscription,
+  transcribeWithGroq,
+  transcriptionProvider,
+  type CompletedTranscript,
+} from "@/lib/transcribe";
 import { parseTimestamp } from "@/lib/transcript";
 import type { MeetingStatus } from "@/lib/generated/prisma/enums";
 
@@ -13,6 +21,10 @@ import type { MeetingStatus } from "@/lib/generated/prisma/enums";
  * concurrently — every transition is claimed with a conditional update. In dev
  * the client polls it; in production the same function is called from the
  * transcription webhook. No queue infrastructure required.
+ *
+ * AssemblyAI is asynchronous (submit, then poll). Groq Whisper is synchronous,
+ * so for that provider the QUEUED step transcribes inline and lands directly in
+ * SUMMARIZING.
  */
 export async function advanceMeeting(meetingId: string): Promise<MeetingStatus> {
   const meeting = await db.meeting.findUnique({ where: { id: meetingId } });
@@ -25,16 +37,26 @@ export async function advanceMeeting(meetingId: string): Promise<MeetingStatus> 
         // claim the transition so two pollers can't both submit
         const claimed = await db.meeting.updateMany({
           where: { id: meetingId, status: "QUEUED" },
-          data: { status: "TRANSCRIBING" },
+          data: { status: "TRANSCRIBING", transcriptProvider: transcriptionProvider() },
         });
         if (claimed.count === 0) return (await status(meetingId)) ?? "QUEUED";
 
         try {
-          const transcriptId = await submitTranscription(meeting.storageKey);
-          await db.meeting.update({
-            where: { id: meetingId },
-            data: { transcriptId },
-          });
+          if (isAsyncTranscription()) {
+            const transcriptId = await submitTranscription(meeting.storageKey);
+            await db.meeting.update({
+              where: { id: meetingId },
+              data: { transcriptId },
+            });
+            return "TRANSCRIBING";
+          }
+
+          const result = await transcribeWithGroq(meeting.storageKey);
+          if (result.utterances.length === 0) {
+            return fail(meetingId, "No speech detected in this recording");
+          }
+          await writeTranscript(meetingId, result);
+          return "SUMMARIZING";
         } catch (error) {
           await db.meeting.update({
             where: { id: meetingId },
@@ -42,7 +64,6 @@ export async function advanceMeeting(meetingId: string): Promise<MeetingStatus> 
           });
           throw error;
         }
-        return "TRANSCRIBING";
       }
 
       case "TRANSCRIBING": {
@@ -62,27 +83,7 @@ export async function advanceMeeting(meetingId: string): Promise<MeetingStatus> 
           return fail(meetingId, "No speech detected in this recording");
         }
 
-        await db.$transaction([
-          db.transcriptSegment.deleteMany({ where: { meetingId } }),
-          db.transcriptSegment.createMany({
-            data: result.utterances.map((u, idx) => ({
-              meetingId,
-              idx,
-              speaker: u.speaker,
-              startMs: u.startMs,
-              endMs: u.endMs,
-              text: u.text,
-              confidence: u.confidence,
-            })),
-          }),
-          db.meeting.update({
-            where: { id: meetingId },
-            data: {
-              status: "SUMMARIZING",
-              durationSec: result.durationSec ? Math.round(result.durationSec) : null,
-            },
-          }),
-        ]);
+        await writeTranscript(meetingId, result);
         return "SUMMARIZING";
       }
 
@@ -120,7 +121,7 @@ export async function advanceMeeting(meetingId: string): Promise<MeetingStatus> 
                 startMs: parseTimestamp(q.timestamp),
               })),
               keywords: summary.keywords,
-              model: process.env.ANTHROPIC_MODEL || "claude-opus-5",
+              model: activeModel(),
             },
           }),
           db.actionItem.createMany({
@@ -153,6 +154,31 @@ export async function advanceMeeting(meetingId: string): Promise<MeetingStatus> 
     const message = error instanceof Error ? error.message : "Processing failed";
     return fail(meetingId, message);
   }
+}
+
+async function writeTranscript(meetingId: string, result: CompletedTranscript) {
+  await db.$transaction([
+    db.transcriptSegment.deleteMany({ where: { meetingId } }),
+    db.transcriptSegment.createMany({
+      data: result.utterances.map((u, idx) => ({
+        meetingId,
+        idx,
+        speaker: u.speaker,
+        startMs: u.startMs,
+        endMs: u.endMs,
+        text: u.text,
+        confidence: u.confidence,
+      })),
+    }),
+    db.meeting.update({
+      where: { id: meetingId },
+      data: {
+        status: "SUMMARIZING",
+        durationSec: result.durationSec ? Math.round(result.durationSec) : null,
+        speakersInferred: result.speakersInferred,
+      },
+    }),
+  ]);
 }
 
 async function fail(meetingId: string, error: string): Promise<MeetingStatus> {

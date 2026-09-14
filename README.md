@@ -65,6 +65,11 @@ Speakers come back from the transcription service as "A", "B", "C". The AI then 
 transcript and, where someone is introduced by name, maps those letters to real names —
 so the transcript says "Priya", not "Speaker B".
 
+On the free Groq setup, Whisper has no speaker diarization at all, so the speaker turns
+are *inferred* from the conversation by an LLM. Those meetings carry a **"speakers
+inferred"** badge above the transcript — a guess is never presented as a measurement. Add
+an AssemblyAI key to get real diarization.
+
 ### The summary
 
 Four things, all on one tab:
@@ -130,9 +135,9 @@ flowchart LR
         S[R2 bucket or local disk]
     end
 
-    subgraph X[AI providers]
-        T[AssemblyAI]
-        C[Claude]
+    subgraph X[AI providers, swappable by env var]
+        T[Groq Whisper or AssemblyAI]
+        C[Groq gpt-oss-120b or Claude]
     end
 
     A1 --> R1
@@ -165,13 +170,17 @@ The same diagram, with the stack rationale beside it, is on the
    file to disk.
 3. The browser calls `POST /api/meetings/:id/ingest`. Status becomes `QUEUED` and the
    pipeline starts.
-4. `QUEUED → TRANSCRIBING`: the audio is handed to AssemblyAI. R2 files are passed as a
-   signed URL; local files are streamed to AssemblyAI's upload endpoint, because
-   `localhost` is not reachable from their servers.
-5. `TRANSCRIBING → SUMMARIZING`: when the transcript is ready it is written to the database
-   as individual segments (speaker, start, end, text).
-6. `SUMMARIZING → READY`: the transcript goes to Claude, which returns a summary, chapters,
-   questions, action items, and speaker names — as validated JSON, not prose.
+4. `QUEUED → TRANSCRIBING`: the audio goes to the transcription provider.
+   - **Groq (default)** is synchronous: one Whisper call returns the whole transcript, an
+     LLM then infers the speaker turns, and the meeting lands straight in `SUMMARIZING`.
+   - **AssemblyAI** is asynchronous: submit, then poll. R2 files are passed as a signed
+     URL; local files are streamed to its upload endpoint, because `localhost` is not
+     reachable from their servers.
+5. `TRANSCRIBING → SUMMARIZING`: the transcript is written to the database as individual
+   segments (speaker, start, end, text).
+6. `SUMMARIZING → READY`: the transcript goes to the LLM, which returns a summary,
+   chapters, questions, action items, and speaker names — as JSON validated against a Zod
+   schema, not prose.
 7. The page, which has been polling, sees `READY` and re-renders into the full workspace.
 
 ### Why there is no job queue
@@ -232,14 +241,37 @@ hundreds of endpoints, a team big enough that enforced module boundaries save mo
 than they cost, or a non-JS mobile client as a primary consumer. None of those are true
 here.
 
+### Providers and cost
+
+Both AI providers are chosen at runtime by environment variable. Nothing in the app code
+knows which one is active.
+
+| | Free setup (default) | Paid setup |
+|---|---|---|
+| Transcription | Groq `whisper-large-v3` — about $0.11/hour of audio, free tier available | AssemblyAI |
+| Speaker labels | **Inferred** by an LLM from conversational cues, flagged in the UI | **Measured** diarization |
+| Summary + chat | Groq `openai/gpt-oss-120b`, strict JSON-schema decoding | Claude `claude-opus-5` |
+| Keys needed | `GROQ_API_KEY` | `ASSEMBLYAI_API_KEY`, `ANTHROPIC_API_KEY` |
+| Audio size limit | 25 MB free tier / 100 MB dev tier per file | no practical limit |
+
+Mixing is fine and is probably the best value: AssemblyAI for real diarization, Groq for
+the writing. Set `TRANSCRIBE_PROVIDER=assemblyai` and `LLM_PROVIDER=groq`.
+
+The trade-off worth naming: inferred speakers are a genuine downgrade. Whisper returns
+one undifferentiated stream of text, so `lib/ai/diarize.ts` asks a model where the speaker
+changes and assigns A/B/C from those turn boundaries. It reads questions-then-answers,
+introductions and handoffs, and it is wrong sometimes — which is exactly why the meeting
+is flagged rather than quietly labelled. On transcripts over 400 lines it stops guessing
+and falls back to a single speaker.
+
 ### The rest of the choices
 
 | Choice | Why | What I rejected |
 |---|---|---|
 | **Postgres + Prisma 7** | Real relational data: meeting → segments, summary, action items, messages. Typed queries, checked-in migrations. | — |
 | **Better Auth** (self-hosted email + password) | The whole app runs with no third-party auth signup. Clone, `docker compose up`, two API keys, done. Sessions live in your own database. | Clerk/Auth0: faster to wire, but adds a vendor signup for anyone running this and hides the session model. |
-| **AssemblyAI** | Speaker diarization, word-level timings, and language detection in one call. | Raw Whisper — no speaker labels, and without speaker labels this product does not exist. |
-| **Claude (`claude-opus-5`)** | Structured outputs against a Zod schema, so a malformed summary is a caught error instead of silent corruption. Long context means the whole transcript fits. | Prompting for free text and parsing it — fragile. |
+| **Swappable AI providers** | Both the transcriber and the LLM are chosen by env var, so the app runs free on Groq or higher-quality on paid services without a code change. See below. | Hard-wiring one vendor. |
+| **Structured outputs, not parsing** | The summary comes back validated against a Zod schema on both providers (`json_schema` strict mode on Groq, `messages.parse` on Claude), so a malformed summary is a caught error instead of silent corruption. | Prompting for free text and parsing it — fragile. |
 | **Postgres full-text search** | GIN indexes over the transcript, `ts_headline` for highlighted snippets. Milliseconds, zero extra infrastructure. | A vector database — infrastructure and retrieval bugs in exchange for nothing at this scale. |
 | **No RAG for the chat** | Meetings fit in the context window. The whole transcript goes in as a cached system block, so follow-ups are cheap and nothing is missed by bad retrieval. | Chunk + embed + retrieve. |
 | **Tailwind, hand-rolled components** | Full control, no component-library version fights, small surface. | A component library — more to fight than to gain here. |
@@ -361,9 +393,11 @@ Open `.env` and fill in:
 
 ```bash
 BETTER_AUTH_SECRET="<run: openssl rand -hex 32>"
-ASSEMBLYAI_API_KEY="<from assemblyai.com>"
-ANTHROPIC_API_KEY="<from console.anthropic.com>"
+GROQ_API_KEY="<free, from console.groq.com/keys>"
 ```
+
+That is the whole requirement. Optionally add `ASSEMBLYAI_API_KEY` for real speaker
+diarization, or `ANTHROPIC_API_KEY` with `LLM_PROVIDER=anthropic` for sharper summaries.
 
 Then:
 
@@ -375,8 +409,8 @@ npm run dev         # http://localhost:3000
 
 Sign up, then optionally `npm run db:seed` to load the demo meeting onto your account.
 
-**Without the two API keys** the app still runs. Uploads succeed; the meeting then shows
-`FAILED` with "Missing ASSEMBLYAI_API_KEY", which is the error path working correctly.
+**Without any API key** the app still runs. Uploads succeed; the meeting then shows
+`FAILED` with "Missing GROQ_API_KEY", which is the error path working correctly.
 
 ### Environment variables
 
@@ -385,8 +419,14 @@ Sign up, then optionally `npm run db:seed` to load the demo meeting onto your ac
 | `DATABASE_URL` | yes | Postgres connection string. Defaults to the Docker one. |
 | `BETTER_AUTH_SECRET` | yes | Signs session cookies. `openssl rand -hex 32`. |
 | `BETTER_AUTH_URL`, `NEXT_PUBLIC_APP_URL` | yes | Where the app is served from. |
-| `ASSEMBLYAI_API_KEY` | yes | Transcription and speaker labels. |
-| `ANTHROPIC_API_KEY` | yes | Summaries and chat. |
+| `GROQ_API_KEY` | yes (default setup) | Free tier. Powers Whisper transcription and the summaries/chat. |
+| `LLM_PROVIDER` | no | `groq` or `anthropic`. Unset picks Groq when its key exists. |
+| `GROQ_MODEL` | no | Defaults to `openai/gpt-oss-120b` — the Groq model with strict JSON-schema decoding. |
+| `TRANSCRIBE_PROVIDER` | no | `groq` or `assemblyai`. Unset picks AssemblyAI when its key exists. |
+| `GROQ_WHISPER_MODEL` | no | `whisper-large-v3` (default) or `whisper-large-v3-turbo`. |
+| `GROQ_AUDIO_MAX_BYTES` | no | Upload guard. 25 MB free tier, 100 MB dev tier. |
+| `ASSEMBLYAI_API_KEY` | only for real diarization | Paid. Enables measured speaker labels. |
+| `ANTHROPIC_API_KEY` | only when `LLM_PROVIDER=anthropic` | Paid. |
 | `ANTHROPIC_MODEL` | no | Defaults to `claude-opus-5`. |
 | `STORAGE_DRIVER` | no | `local` (default) or `r2`. |
 | `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` | only for `r2` | Cloudflare R2 credentials. |
@@ -462,5 +502,8 @@ transcript.
 - The demo seed's audio is silent; the transcript and timings are real.
 - Diarization quality is the provider's. On a long call with eight speakers, expect the
   occasional merged or split speaker — which is the main reason the speaker→name map is a
-  first-class, editable field rather than baked into each segment.
+  first-class, editable field rather than baked into each segment. On the Groq path,
+  speaker labels are inferred rather than measured and are flagged as such.
+- Groq caps audio uploads at 25 MB (free) or 100 MB (dev tier), which is roughly an hour
+  of compressed audio. Longer meetings need AssemblyAI, or chunking that is not built yet.
 - Uploads are capped at 2 GB by the create endpoint's validation.

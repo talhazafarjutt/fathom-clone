@@ -28,6 +28,7 @@ export function MeetingWorkspace({
   durationSec,
   startAtSec,
   readOnly = false,
+  speakersInferred = false,
 }: {
   meetingId: string;
   playbackUrl: string;
@@ -39,6 +40,7 @@ export function MeetingWorkspace({
   durationSec: number | null;
   startAtSec?: number;
   readOnly?: boolean;
+  speakersInferred?: boolean;
 }) {
   const audioRef = useRef<HTMLAudioElement>(null);
   const [currentMs, setCurrentMs] = useState((startAtSec ?? 0) * 1000);
@@ -110,7 +112,17 @@ export function MeetingWorkspace({
         />
 
         <div className="flex items-center justify-between px-4 py-2 text-xs text-muted">
-          <span>{segments.length} segments</span>
+          <span className="flex items-center gap-2">
+            {segments.length} segments
+            {speakersInferred && (
+              <span
+                title="This recording was transcribed by Whisper, which has no speaker diarization. Speaker labels were inferred from the conversation and may be wrong."
+                className="rounded-full bg-surface-muted px-2 py-0.5 text-warning"
+              >
+                speakers inferred
+              </span>
+            )}
+          </span>
           <label className="flex items-center gap-2">
             <input
               type="checkbox"

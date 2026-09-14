@@ -44,6 +44,7 @@ export default async function SharedMeetingPage({
           actionItems={data.actionItems}
           chatMessages={[]}
           durationSec={meeting.durationSec}
+          speakersInferred={meeting.speakersInferred}
           readOnly
         />
       </main>

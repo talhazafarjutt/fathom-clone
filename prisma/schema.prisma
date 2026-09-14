@@ -109,8 +109,12 @@ model Meeting {
   durationSec Int?
 
   // provider bookkeeping
-  transcriptId String? // AssemblyAI transcript id
-  error        String?
+  transcriptId       String? // AssemblyAI transcript id
+  transcriptProvider String? // "assemblyai" | "groq"
+  error              String?
+
+  // true when speaker labels were inferred by an LLM instead of measured
+  speakersInferred Boolean @default(false)
 
   // { "A": "Talha Zafar" } — user-assigned names for diarized speakers
   speakerNames Json @default("{}")
