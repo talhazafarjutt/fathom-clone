@@ -3,6 +3,9 @@ import { db } from "@/lib/db";
 import { advanceMeeting } from "@/lib/pipeline";
 import { requireUserApi } from "@/lib/session";
 
+// Groq transcribes inline, so this request can run for a while.
+export const maxDuration = 300;
+
 /** Called once the bytes are in storage: flips UPLOADING -> QUEUED and starts work. */
 export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
   const user = await requireUserApi();

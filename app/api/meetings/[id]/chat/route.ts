@@ -4,6 +4,9 @@ import { extractCitations, streamMeetingAnswer, type ChatTurn } from "@/lib/ai/c
 import { db } from "@/lib/db";
 import { requireUserApi } from "@/lib/session";
 
+// The answer is streamed token by token.
+export const maxDuration = 120;
+
 const BodySchema = z.object({ question: z.string().min(1).max(2000) });
 
 export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {

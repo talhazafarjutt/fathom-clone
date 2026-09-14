@@ -13,8 +13,11 @@
     "db:deploy": "prisma migrate deploy",
     "db:studio": "prisma studio",
     "db:seed": "tsx prisma/seed.ts",
-    "db:up": "docker compose up -d",
-    "db:down": "docker compose down"
+    "db:up": "docker compose up -d db",
+    "db:down": "docker compose down",
+    "docker:up": "docker compose --profile app up -d --build",
+    "docker:down": "docker compose --profile app down",
+    "docker:logs": "docker compose logs -f app"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.125.0",
@@ -55,5 +58,8 @@
     "@prisma/engines@7.10.0": true,
     "esbuild@0.28.2": true,
     "unrs-resolver@1.12.2": true
+  },
+  "engines": {
+    "node": ">=20"
   }
 }

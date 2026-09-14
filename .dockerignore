@@ -1,0 +1,16 @@
+node_modules
+.next
+.git
+.github
+.agent-logs
+.claude
+.agents
+.windsurf
+uploads
+lib/generated
+*.md
+.env
+.env.*
+!.env.example
+docker-compose.yml
+Dockerfile

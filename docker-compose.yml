@@ -17,5 +17,36 @@ services:
       timeout: 3s
       retries: 10
 
+  # Only starts with `--profile app`, so `npm run db:up` stays database-only
+  # for local development against `npm run dev`.
+  app:
+    profiles: ["app"]
+    build:
+      context: .
+    container_name: fathom-app
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/fathom?schema=public
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?set BETTER_AUTH_SECRET in .env}
+      BETTER_AUTH_URL: ${BETTER_AUTH_URL:-http://localhost:3000}
+      NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-http://localhost:3000}
+      LLM_PROVIDER: ${LLM_PROVIDER:-groq}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      GROQ_MODEL: ${GROQ_MODEL:-openai/gpt-oss-120b}
+      TRANSCRIBE_PROVIDER: ${TRANSCRIBE_PROVIDER:-groq}
+      GROQ_WHISPER_MODEL: ${GROQ_WHISPER_MODEL:-whisper-large-v3}
+      ASSEMBLYAI_API_KEY: ${ASSEMBLYAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      STORAGE_DRIVER: ${STORAGE_DRIVER:-local}
+    ports:
+      - "3000:3000"
+    volumes:
+      # keeps uploaded media across container rebuilds when using the local driver
+      - fathom-uploads:/app/uploads
+
 volumes:
   fathom-pgdata:
+  fathom-uploads:

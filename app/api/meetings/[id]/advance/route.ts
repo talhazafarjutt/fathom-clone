@@ -3,6 +3,9 @@ import { db } from "@/lib/db";
 import { advanceMeeting } from "@/lib/pipeline";
 import { requireUserApi } from "@/lib/session";
 
+// A pipeline step may call a transcription or summarization provider.
+export const maxDuration = 300;
+
 /**
  * Drives the pipeline one step and reports status. The meeting page polls this
  * while a meeting is processing; a webhook would call the same code path.

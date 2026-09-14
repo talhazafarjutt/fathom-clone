@@ -448,20 +448,111 @@ Sign up, then optionally `npm run db:seed` to load the demo meeting onto your ac
 
 ---
 
-## 8. Deploying
+## 8. Running in Docker
 
-1. Push to GitHub and import the repo into Vercel.
-2. Create a Postgres database (Neon works well) and set `DATABASE_URL`.
-3. Set `STORAGE_DRIVER=r2` plus the `R2_*` variables. This is not optional in production:
-   serverless functions cap request bodies around 4.5 MB, and meeting audio is bigger, so
-   uploads must go straight from the browser to the bucket.
-4. Set `BETTER_AUTH_URL` and `NEXT_PUBLIC_APP_URL` to the deployed origin.
-5. Run `npm run db:deploy` against the production database.
-6. Sign up on the deployed app and run the seed against it so the list is not empty.
+The repo ships a production Dockerfile (multi-stage, Next.js standalone output,
+non-root user, healthcheck) and a compose file that runs the app and Postgres together.
+
+```bash
+cp .env.example .env     # fill in BETTER_AUTH_SECRET and GROQ_API_KEY
+npm run docker:up        # builds the image, starts db + app
+npm run docker:logs      # follow the app
+```
+
+App on http://localhost:3000. Migrations run automatically on container start
+(`docker-entrypoint.sh`, disable with `RUN_MIGRATIONS=false`). Uploaded media lives in a
+named volume so rebuilds do not lose it.
+
+`npm run db:up` still starts **only** Postgres, for working against `npm run dev`.
+
+### What is in the image
+
+| Stage | Does |
+|---|---|
+| `deps` | `npm ci --ignore-scripts` then `prisma generate` |
+| `builder` | `next build` with a placeholder `DATABASE_URL` |
+| `runner` | Node 22 Alpine, standalone server, Prisma CLI + migrations, non-root, healthcheck on `/api/health` |
 
 ---
 
-## 9. Agent logs
+## 9. Deploying — Vercel or Render
+
+**Short answer: Vercel needs no image at all; Render can use the Dockerfile but does not
+have to.** This is a normal Next.js application, so both paths work.
+
+| | Vercel | Render |
+|---|---|---|
+| Docker required? | **No.** Native Next.js build. | **No** — Render builds Next natively too — but the Dockerfile is here and `render.yaml` uses it. |
+| Storage driver | **Must be `r2`.** The filesystem is read-only apart from `/tmp`, so the local driver cannot work. | `local` works with a persistent disk (set up in `render.yaml`), or use `r2`. |
+| Long requests | Hobby caps functions at 60s; Pro allows up to 300s. `vercel.json` asks for 300s. | Long-running server, no per-request cap. |
+| Migrations | `vercel.json` build command runs `prisma migrate deploy`. | `docker-entrypoint.sh` runs it on boot. |
+| Cold starts | Yes, serverless. | None on paid plans; free instances sleep. |
+
+### Which one to pick
+
+**Render, for the simplest correct deployment.** Groq's Whisper path is synchronous — one
+request transcribes the whole file — and a long meeting can exceed Vercel's Hobby 60s
+function limit. A Render web service has no such ceiling, and `render.yaml` provisions the
+web service, a managed Postgres, a disk for uploads, and the health check in one blueprint.
+
+**Vercel, for zero infrastructure.** Two things to get right:
+
+1. `STORAGE_DRIVER=r2` plus the `R2_*` variables. Not optional: the filesystem is
+   read-only, and the 4.5 MB request-body limit means uploads have to go browser → bucket
+   directly anyway.
+2. Either use Pro (300s functions), or set `TRANSCRIBE_PROVIDER=assemblyai` so
+   transcription is submit-then-poll and no single request waits for it.
+
+### Vercel, step by step
+
+1. Import the repo. The framework is detected automatically.
+2. Create Postgres (Neon works well) and set `DATABASE_URL`.
+3. Set `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`, `NEXT_PUBLIC_APP_URL`, `GROQ_API_KEY`.
+4. Set `STORAGE_DRIVER=r2` and the four `R2_*` variables.
+5. Deploy. `vercel.json` runs `prisma migrate deploy` as part of the build.
+
+### Render, step by step
+
+1. New → Blueprint → point at this repository. `render.yaml` does the rest.
+2. Fill in `GROQ_API_KEY` in the dashboard (marked `sync: false`, so it is never committed).
+3. Deploy. The entrypoint migrates, then boots; `/api/health` gates the rollout.
+
+---
+
+## 10. CI/CD
+
+Two GitHub Actions workflows, in [`.github/workflows/`](.github/workflows/).
+
+**`ci.yml`** — every push and pull request:
+
+| Job | Checks |
+|---|---|
+| `verify` | `npm ci` → typecheck → lint → **apply the checked-in migrations to a real throwaway Postgres** → `next build` |
+| `docker` | the image builds, with a layer cache |
+
+Applying migrations to an empty database on every PR catches the mistake that actually
+happens: a schema change that only works locally because the dev database already drifted
+into the right shape.
+
+**`deploy.yml`** — push to `main`:
+
+1. `migrate` — applies migrations to the production database.
+2. `vercel`, `render`, `image` — deploy to whichever targets are configured, and publish
+   the container image to GHCR.
+
+Every deploy job **skips cleanly when its secret is missing** instead of failing, so the
+workflow is green on a fresh clone and switches itself on as secrets are added.
+
+| Secret | Enables |
+|---|---|
+| `DATABASE_URL` | production migrations |
+| `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID` | Vercel deploys |
+| `RENDER_DEPLOY_HOOK_URL` | Render deploys |
+| — | GHCR publishing uses the built-in `GITHUB_TOKEN` |
+
+---
+
+## 11. Agent logs
 
 Every prompt I sent and every final response came back is committed under
 [`.agent-logs/`](.agent-logs/), captured automatically by two Claude Code hooks
@@ -473,7 +564,7 @@ transcript.
 
 ---
 
-## 10. What I did not build, and why
+## 12. What I did not build, and why
 
 - **A bot that joins your Zoom/Meet/Teams call.** Cadence records from the browser instead.
   A real meeting bot is a platform integration in its own right — joining, admission,
@@ -496,7 +587,7 @@ transcript.
 - **CRM export.** Action items are structured enough to push into HubSpot or Salesforce;
   it is a mapping, not a redesign.
 
-## 11. Known limits
+## 13. Known limits
 
 - Meetings are processed while a browser tab is open, until the webhook is wired up.
 - The demo seed's audio is silent; the transcript and timings are real.
