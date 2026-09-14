@@ -1,7 +1,6 @@
 services:
   db:
     image: postgres:16-alpine
-    container_name: fathom-pg
     restart: unless-stopped
     environment:
       POSTGRES_USER: postgres
@@ -23,7 +22,6 @@ services:
     profiles: ["app"]
     build:
       context: .
-    container_name: fathom-app
     restart: unless-stopped
     depends_on:
       db:
