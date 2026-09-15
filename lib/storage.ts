@@ -1,10 +1,11 @@
 import { createWriteStream } from "node:fs";
-import { mkdir, stat, writeFile } from "node:fs/promises";
+import { mkdir, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import {
   GetObjectCommand,
+  HeadBucketCommand,
   PutObjectCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
@@ -138,4 +139,60 @@ export async function getPlaybackUrl(key: string): Promise<string> {
     new GetObjectCommand({ Bucket: required("R2_BUCKET"), Key: key }),
     { expiresIn: 60 * 60 * 6 },
   );
+}
+
+
+/**
+ * Can this deployment actually store an upload right now? Answers the question
+ * that "uploads don't work on the server" always turns out to be, without
+ * exposing any credential: for R2, which variables are missing and whether the
+ * bucket answers; for local, whether the directory is genuinely writable.
+ */
+export async function storageHealth(): Promise<{
+  ok: boolean;
+  driver: StorageDriver;
+  detail: string;
+  missingEnv?: string[];
+}> {
+  if (storageDriver === "local") {
+    try {
+      await mkdir(LOCAL_ROOT, { recursive: true });
+      const probe = path.join(LOCAL_ROOT, ".write-probe");
+      await writeFile(probe, "ok");
+      await rm(probe, { force: true });
+      return { ok: true, driver: "local", detail: `${LOCAL_ROOT} is writable` };
+    } catch (error) {
+      return {
+        ok: false,
+        driver: "local",
+        detail: `${LOCAL_ROOT} is not writable (${
+          error instanceof Error ? error.message : "unknown error"
+        }). On a read-only host use STORAGE_DRIVER=r2, or mount a disk.`,
+      };
+    }
+  }
+
+  const missingEnv = ["R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET"].filter(
+    (name) => !process.env[name],
+  );
+  if (missingEnv.length) {
+    return { ok: false, driver: "r2", detail: "R2 is selected but not fully configured", missingEnv };
+  }
+
+  try {
+    await r2().send(new HeadBucketCommand({ Bucket: required("R2_BUCKET") }));
+    return {
+      ok: true,
+      driver: "r2",
+      detail:
+        "bucket reachable. If uploads still fail in the browser, the bucket's CORS " +
+        "policy must allow PUT from this site's origin.",
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      driver: "r2",
+      detail: `bucket unreachable: ${error instanceof Error ? error.message : "unknown error"}`,
+    };
+  }
 }

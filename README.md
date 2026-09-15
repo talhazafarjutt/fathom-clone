@@ -568,6 +568,43 @@ missing `GROQ_API_KEY`. It also warns when Groq is selected on Vercel, where a H
 function stops at 60s. The same check runs in the container entrypoint, and
 `npm run check:env` runs it locally.
 
+### When uploads fail on a deployment
+
+`GET /api/health` reports what storage thinks it is, which is usually the whole answer:
+
+```json
+{ "status": "degraded", "database": "up",
+  "storage": { "ok": false, "driver": "local",
+    "detail": "/app/uploads is not writable (EROFS: read-only file system)…" } }
+```
+
+| What it says | Cause | Fix |
+|---|---|---|
+| `driver: "local"`, `EROFS` | read-only host, nothing can be written | `STORAGE_DRIVER=r2`, or mount a disk |
+| `missingEnv: [...]` | R2 selected, half configured | set the listed variables |
+| `bucket unreachable` | wrong account id, bucket name or keys | check the R2 credentials |
+| `ok: true` but the browser still fails | **the bucket has no CORS policy** | add the policy below |
+
+The last one is the common one, and it looks like nothing: the browser PUTs straight to
+R2, so the bucket has to allow that origin itself. The upload reports
+*"Upload failed before it reached the bucket"* when it happens. In the Cloudflare
+dashboard, under **R2 → your bucket → Settings → CORS policy**:
+
+```json
+[
+  {
+    "AllowedOrigins": ["https://your-app.vercel.app"],
+    "AllowedMethods": ["PUT", "GET"],
+    "AllowedHeaders": ["content-type"],
+    "ExposeHeaders": ["etag"],
+    "MaxAgeSeconds": 3600
+  }
+]
+```
+
+List every origin that will upload, including preview deployments, and the exact scheme
+and host — `https://app.example.com` does not cover `https://www.app.example.com`.
+
 ### Render, step by step
 
 1. New → Blueprint → point at this repository. `render.yaml` does the rest.

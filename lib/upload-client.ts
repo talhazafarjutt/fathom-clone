@@ -20,11 +20,21 @@ export function uploadBlob(
     xhr.upload.onprogress = (event) => {
       if (event.lengthComputable) onProgress?.(event.loaded / event.total);
     };
-    xhr.onload = () =>
-      xhr.status >= 200 && xhr.status < 300
-        ? resolve()
-        : reject(new Error(`Upload failed (${xhr.status})`));
-    xhr.onerror = () => reject(new Error("Upload failed — network error"));
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) return resolve();
+      // S3/R2 answer with an XML <Message>; surface it instead of a bare code.
+      const detail = /<Message>([^<]+)<\/Message>/.exec(xhr.responseText || "")?.[1];
+      reject(new Error(`Upload failed (${xhr.status})${detail ? `: ${detail}` : ""}`));
+    };
+    xhr.onerror = () =>
+      reject(
+        new Error(
+          target.mode === "direct"
+            ? "Upload failed before it reached the bucket. This is almost always CORS: " +
+              "the R2 bucket must allow PUT from this site's origin. See README section 9."
+            : "Upload failed — network error",
+        ),
+      );
     xhr.send(blob);
   });
 }
@@ -49,7 +59,14 @@ export async function createAndUpload(opts: {
       title: opts.title,
     }),
   });
-  if (!createRes.ok) throw new Error("Could not create the meeting");
+  if (!createRes.ok) {
+    // The API explains itself (unsupported format, size, auth); don't discard it.
+    const message = await createRes
+      .json()
+      .then((body: { error?: string }) => body.error)
+      .catch(() => null);
+    throw new Error(message || `Could not create the meeting (${createRes.status})`);
+  }
   const { meetingId, upload } = (await createRes.json()) as {
     meetingId: string;
     upload: UploadTarget;
@@ -58,7 +75,13 @@ export async function createAndUpload(opts: {
   await uploadBlob(upload, opts.file, opts.contentType, opts.onProgress);
 
   const ingestRes = await fetch(`/api/meetings/${meetingId}/ingest`, { method: "POST" });
-  if (!ingestRes.ok) throw new Error("Upload saved, but processing could not start");
+  if (!ingestRes.ok) {
+    const message = await ingestRes
+      .json()
+      .then((body: { error?: string }) => body.error)
+      .catch(() => null);
+    throw new Error(message || `Upload saved, but processing could not start (${ingestRes.status})`);
+  }
 
   return meetingId;
 }
