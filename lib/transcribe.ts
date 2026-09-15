@@ -29,6 +29,10 @@ export type CompletedTranscript = {
   speakersInferred: boolean;
   /** set when the upload had to be transcoded; the caller stores it for playback */
   transcodedAudio?: { buffer: Buffer; extension: string; contentType: string };
+  /** the language Whisper detected, when the audio was not English */
+  sourceLanguage?: string;
+  /** true when the stored text is a translation rather than the spoken words */
+  translated?: boolean;
 };
 
 export type TranscriptResult =
@@ -149,29 +153,58 @@ export async function fetchTranscription(id: string): Promise<TranscriptResult> 
 
 /** One call: transcribe, then infer speaker turns from the text. */
 export async function transcribeWithGroq(storageKey: string): Promise<CompletedTranscript> {
-  const { file, transcodedAudio, cleanup } = await loadAudioForGroq(storageKey);
+  const { buffer, filename, transcodedAudio, cleanup } = await loadAudioForGroq(storageKey);
   try {
-    return await runGroqTranscription(file, transcodedAudio);
+    return await runGroqTranscription(buffer, filename, transcodedAudio);
   } finally {
     await cleanup();
   }
 }
 
+type WhisperVerbose = {
+  text?: string;
+  duration?: number;
+  language?: string;
+  segments?: { start: number; end: number; text: string; avg_logprob?: number }[];
+};
+
+function isEnglish(language: string | undefined) {
+  const value = (language ?? "").trim().toLowerCase();
+  return value === "" || value === "en" || value === "english";
+}
+
 async function runGroqTranscription(
-  file: Awaited<ReturnType<typeof toFile>>,
+  buffer: Buffer,
+  filename: string,
   transcodedAudio: CompletedTranscript["transcodedAudio"],
 ): Promise<CompletedTranscript> {
-
-  const response = (await groq().audio.transcriptions.create({
-    file,
+  let response = (await groq().audio.transcriptions.create({
+    file: await toFile(buffer, filename),
     model: GROQ_WHISPER_MODEL,
     response_format: "verbose_json",
     timestamp_granularities: ["segment"],
-  })) as unknown as {
-    text?: string;
-    duration?: number;
-    segments?: { start: number; end: number; text: string; avg_logprob?: number }[];
-  };
+  })) as unknown as WhisperVerbose;
+
+  // Transcripts are stored in English. Whisper transcribes in whatever language
+  // was spoken, so non-English audio goes through the translation task, which
+  // returns English text with the same kind of timestamped segments.
+  let sourceLanguage: string | undefined;
+  let translated = false;
+  if (!isEnglish(response.language)) {
+    sourceLanguage = response.language;
+    const englishVersion = (await groq().audio.translations.create({
+      file: await toFile(buffer, filename),
+      model: GROQ_WHISPER_MODEL,
+      // note: the translation endpoint rejects timestamp_granularities, but
+      // verbose_json still carries segments
+      response_format: "verbose_json",
+    })) as unknown as WhisperVerbose;
+
+    if ((englishVersion.segments ?? []).length > 0 || englishVersion.text) {
+      response = { ...englishVersion, duration: englishVersion.duration ?? response.duration };
+      translated = true;
+    }
+  }
 
   const raw = (response.segments ?? [])
     .map((segment) => ({
@@ -185,6 +218,8 @@ async function runGroqTranscription(
   if (raw.length === 0) {
     return {
       transcodedAudio,
+      sourceLanguage,
+      translated,
       status: "completed",
       utterances: response.text
         ? [
@@ -231,6 +266,8 @@ async function runGroqTranscription(
 
   return {
     transcodedAudio,
+    sourceLanguage,
+    translated,
     status: "completed",
     utterances,
     durationSec: response.duration ?? raw.at(-1)!.endMs / 1000,
@@ -267,7 +304,8 @@ async function loadAudioForGroq(storageKey: string) {
 
     if (!needsTranscode(sourceName, sizeBytes, GROQ_MAX_BYTES)) {
       return {
-        file: await toFile(createReadStream(sourcePath), sourceName),
+        buffer: await readFile(sourcePath),
+        filename: sourceName,
         transcodedAudio: undefined,
         cleanup: temp.cleanup,
       };
@@ -298,7 +336,8 @@ async function loadAudioForGroq(storageKey: string) {
     }
 
     return {
-      file: await toFile(buffer, "audio.mp3"),
+      buffer,
+      filename: "audio.mp3",
       transcodedAudio: {
         buffer,
         extension: "mp3",

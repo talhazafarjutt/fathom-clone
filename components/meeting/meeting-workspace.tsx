@@ -29,6 +29,8 @@ export function MeetingWorkspace({
   startAtSec,
   readOnly = false,
   speakersInferred = false,
+  sourceLanguage = null,
+  translated = false,
 }: {
   meetingId: string;
   playbackUrl: string;
@@ -41,6 +43,8 @@ export function MeetingWorkspace({
   startAtSec?: number;
   readOnly?: boolean;
   speakersInferred?: boolean;
+  sourceLanguage?: string | null;
+  translated?: boolean;
 }) {
   const audioRef = useRef<HTMLAudioElement>(null);
   const [currentMs, setCurrentMs] = useState((startAtSec ?? 0) * 1000);
@@ -114,6 +118,14 @@ export function MeetingWorkspace({
         <div className="flex items-center justify-between px-4 py-2 text-xs text-muted">
           <span className="flex items-center gap-2">
             {segments.length} segments
+            {translated && (
+              <span
+                title={`This recording was in ${sourceLanguage ?? "another language"}. Transcripts are stored in English, so this text is Whisper's translation rather than the words as spoken.`}
+                className="rounded-full bg-surface-muted px-2 py-0.5 text-accent"
+              >
+                translated from {sourceLanguage ?? "another language"}
+              </span>
+            )}
             {speakersInferred && (
               <span
                 title="This recording was transcribed by Whisper, which has no speaker diarization. Speaker labels were inferred from the conversation and may be wrong."

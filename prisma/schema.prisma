@@ -119,6 +119,11 @@ model Meeting {
   // true when speaker labels were inferred by an LLM instead of measured
   speakersInferred Boolean @default(false)
 
+  // transcripts are always stored in English; when the audio was in another
+  // language these record what it was and that the text is a translation
+  sourceLanguage String?
+  translated     Boolean @default(false)
+
   // { "A": "Talha Zafar" } — user-assigned names for diarized speakers
   speakerNames Json @default("{}")
 

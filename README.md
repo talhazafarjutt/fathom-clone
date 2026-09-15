@@ -268,7 +268,11 @@ The trade-off worth naming: inferred speakers are a genuine downgrade. Whisper r
 one undifferentiated stream of text, so `lib/ai/diarize.ts` asks a model where the speaker
 changes and assigns A/B/C from those turn boundaries. It reads questions-then-answers,
 introductions and handoffs, and it is wrong sometimes — which is exactly why the meeting
-is flagged rather than quietly labelled. On transcripts over 400 lines it stops guessing
+is flagged rather than quietly labelled. Transcripts are also always stored in English:
+Whisper reports the language it heard, and anything other than English is re-run through
+its translation task, which returns English text with the same timestamped segments. The
+meeting then carries a `translated from <language>` badge, because a translation is not
+the words as spoken. On transcripts over 400 lines it stops guessing
 and falls back to a single speaker.
 
 ### The rest of the choices

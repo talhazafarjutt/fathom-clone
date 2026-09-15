@@ -189,6 +189,8 @@ async function writeTranscript(meetingId: string, result: CompletedTranscript) {
         status: "SUMMARIZING",
         durationSec: result.durationSec ? Math.round(result.durationSec) : null,
         speakersInferred: result.speakersInferred,
+        sourceLanguage: result.sourceLanguage ?? null,
+        translated: result.translated ?? false,
         ...(audioKey ? { audioKey } : {}),
       },
     }),
