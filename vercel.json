@@ -1,6 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "buildCommand": "prisma generate && prisma migrate deploy && next build",
+  "buildCommand": "npm run build",
   "framework": "nextjs",
   "functions": {
     "app/api/meetings/[id]/ingest/route.ts": { "maxDuration": 300 },
