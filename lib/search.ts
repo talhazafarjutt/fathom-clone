@@ -15,6 +15,12 @@ export type SearchHit = {
  * Postgres full-text search across meeting titles and transcripts.
  * Uses the GIN expression indexes added in the `fulltext_search` migration —
  * the expressions here must stay identical to the ones indexed.
+ *
+ * Snippets are rendered as HTML so the <mark> tags highlight, which means
+ * ts_headline must never see raw HTML: it does NOT escape its input, it only
+ * wraps matches in StartSel/StopSel. So the text is HTML-escaped in SQL first
+ * and ts_headline adds the only markup in the result. Escaping just &, < and >
+ * cannot affect matching, because none of them are word characters.
  */
 export async function searchMeetings(userId: string, query: string): Promise<SearchHit[]> {
   const q = query.trim();
@@ -51,7 +57,10 @@ export async function searchMeetings(userId: string, query: string): Promise<Sea
       "durationSec",
       CASE
         WHEN segment_text IS NULL THEN NULL
-        ELSE ts_headline('english', segment_text, plainto_tsquery('english', ${q}),
+        ELSE ts_headline(
+               'english',
+               replace(replace(replace(segment_text, '&', '&amp;'), '<', '&lt;'), '>', '&gt;'),
+               plainto_tsquery('english', ${q}),
                          'StartSel=<mark>,StopSel=</mark>,MaxFragments=1,MaxWords=28,MinWords=8')
       END AS snippet,
       "startMs"

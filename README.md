@@ -572,7 +572,72 @@ workflow is green on a fresh clone and switches itself on as secrets are added.
 
 ---
 
-## 11. Agent logs
+## 11. Security
+
+Four scanners run in [`.github/workflows/security.yml`](.github/workflows/security.yml)
+on every push and pull request, and again weekly, because advisories land against code
+that has not changed.
+
+| Job | Tool | Looks for |
+|---|---|---|
+| `codeql` | GitHub CodeQL, `security-extended` | dataflow bugs: injection, path traversal, unsafe deserialization |
+| `semgrep` | Semgrep, public OWASP/React/Next/Node rulesets | insecure patterns; an ERROR-severity finding fails the build |
+| `secrets` | gitleaks, full history | committed keys and tokens |
+| `dependencies` | `npm audit` | vulnerable packages; fails on critical |
+| `image` | Trivy | OS and library CVEs in the built container |
+
+Semgrep and Trivy upload SARIF, so findings appear in the repository's Security tab
+rather than only in a log.
+
+Run the same checks locally:
+
+```bash
+npm run scan
+```
+
+### What the scans found, and what I did
+
+**A stored XSS in search snippets.** Search highlights matches with `ts_headline`, and
+the result is rendered with `dangerouslySetInnerHTML` so the `<mark>` tags work. A comment
+in the code asserted that `ts_headline` escapes its input. It does not — it only wraps
+matches in the delimiters you ask for, and passes everything else through verbatim:
+
+```
+ts_headline('english', 'before <img src=x onerror=alert(1)> kafka after', ...)
+  -> before <img src=x onerror=alert(1)> <mark>kafka</mark> after
+```
+
+Any HTML in a transcript would therefore execute in the viewer's browser.
+[`lib/search.ts`](lib/search.ts) now HTML-escapes the text in SQL before `ts_headline`
+runs, so the only markup that can reach the page is the `<mark>` pair it adds. Escaping
+`&`, `<` and `>` cannot affect matching, because none of them are word characters.
+Verified by putting the payload above into a transcript and confirming the rendered page
+contains `&lt;img` and no live tag.
+
+**Every GitHub Action was on a mutable tag.** `@v4` can be silently repointed by the
+action's owner, which is a supply-chain risk in a workflow that holds deploy secrets. All
+26 uses are now pinned to full commit SHAs with the version in a trailing comment. Pinning
+also surfaced a real bug: `aquasecurity/trivy-action@0.28.0` did not exist, because that
+project's tags carry a `v` prefix, so that step would have failed on first run.
+
+**Four high-severity `mysql2` advisories, accepted.** They arrive through the Prisma CLI,
+which depends on `mysql2` for a database this application does not use — the driver is
+never loaded, and neither advisory is reachable without a MySQL connection. The only
+available fix downgrades Prisma to 6.x, a breaking change. `npm audit` therefore fails the
+build on **critical** only, and prints the full report either way.
+
+### Notes
+
+- `BETTER_AUTH_SECRET` has no default in production. Better Auth refuses to sign cookies
+  with its fallback, which is what the 500s on a fresh deploy mean.
+- Uploads are scoped by owner: every media and meeting route filters on the session's
+  user id, so a meeting id alone grants nothing. Shared links use an unguessable token.
+- Raw SQL appears once, in `lib/search.ts`, as a Prisma tagged template — the query and
+  the user id are bound parameters, not interpolated text.
+
+---
+
+## 12. Agent logs
 
 Every prompt I sent and every final response came back is committed under
 [`.agent-logs/`](.agent-logs/), captured automatically by two Claude Code hooks
@@ -584,7 +649,7 @@ transcript.
 
 ---
 
-## 12. What I did not build, and why
+## 13. What I did not build, and why
 
 - **A bot that joins your Zoom/Meet/Teams call.** Cadence records from the browser instead.
   A real meeting bot is a platform integration in its own right — joining, admission,
@@ -607,7 +672,7 @@ transcript.
 - **CRM export.** Action items are structured enough to push into HubSpot or Salesforce;
   it is a mapping, not a redesign.
 
-## 13. Known limits
+## 14. Known limits
 
 - Meetings are processed while a browser tab is open, until the webhook is wired up.
 - The demo seed's audio is silent; the transcript and timings are real.

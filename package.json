@@ -17,7 +17,11 @@
     "db:down": "docker compose down",
     "docker:up": "docker compose --profile app up -d --build",
     "docker:down": "docker compose --profile app down",
-    "docker:logs": "docker compose logs -f app"
+    "docker:logs": "docker compose logs -f app",
+    "scan:sast": "docker run --rm -v \"$PWD:/src\" -w /src semgrep/semgrep semgrep scan --config p/default --config p/typescript --config p/react --config p/nextjs --config p/nodejs --config p/owasp-top-ten --config p/secrets --error",
+    "scan:deps": "npm audit --omit=dev",
+    "scan:image": "docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:latest image --severity HIGH,CRITICAL --ignore-unfixed cadence:local",
+    "scan": "npm run scan:sast && npm run scan:deps"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.125.0",

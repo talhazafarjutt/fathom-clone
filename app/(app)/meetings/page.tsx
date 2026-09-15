@@ -86,8 +86,10 @@ export default async function MeetingsPage({
                   {hit.snippet && (
                     <p
                       className="text-sm text-muted [&_mark]:rounded [&_mark]:bg-primary-soft [&_mark]:px-0.5 [&_mark]:text-primary"
-                      // ts_headline escapes the source text and injects only the
-                      // <mark> tags we asked for
+                      // Safe because lib/search.ts HTML-escapes the transcript
+                      // text before ts_headline runs, so the only markup that
+                      // can reach here is the <mark> pair ts_headline added.
+                      // ts_headline itself does not escape anything.
                       dangerouslySetInnerHTML={{ __html: hit.snippet }}
                     />
                   )}
