@@ -491,7 +491,15 @@ named volume so rebuilds do not lose it.
 |---|---|
 | `deps` | `npm ci --ignore-scripts` then `prisma generate` |
 | `builder` | `next build` with a placeholder `DATABASE_URL` |
-| `runner` | Node 22 Alpine, standalone server, Prisma CLI + migrations, non-root, healthcheck on `/api/health` |
+| `runner` | Node 22 Alpine, standalone server, ffmpeg, migrations, non-root, healthcheck on `/api/health` |
+
+**355 MB**, down from 585 MB. The Prisma CLI is not in it. Prisma 7's CLI eagerly requires
+Studio's bundle and its local-dev server — over 250 MB — for an image whose only migration
+job is to replay SQL. [`scripts/migrate.mjs`](scripts/migrate.mjs) does that with the `pg`
+client the server already ships, writing Prisma's own `_prisma_migrations` rows with the
+same SHA-256 checksums, so `prisma migrate deploy` and `migrate status` still agree with
+it. Pruning individual packages out of the CLI was tried first and failed: `fast-check`
+and `@prisma/studio-core/data/bff` are both eagerly loaded.
 
 ---
 
@@ -620,11 +628,24 @@ action's owner, which is a supply-chain risk in a workflow that holds deploy sec
 also surfaced a real bug: `aquasecurity/trivy-action@0.28.0` did not exist, because that
 project's tags carry a `v` prefix, so that step would have failed on first run.
 
-**Four high-severity `mysql2` advisories, accepted.** They arrive through the Prisma CLI,
-which depends on `mysql2` for a database this application does not use — the driver is
-never loaded, and neither advisory is reachable without a MySQL connection. The only
-available fix downgrades Prisma to 6.x, a breaking change. `npm audit` therefore fails the
-build on **critical** only, and prints the full report either way.
+**Four high-severity advisories in the dependency tree, none of them in the deployed
+image.** Two are in `mysql2`, two in `deepmerge-ts`. Both arrive through the Prisma CLI,
+and the CLI is not optional: `@prisma/client` declares `prisma` as a dependency, so moving
+`prisma` to `devDependencies` does not remove it. `mysql2` additionally arrives as an
+optional peer of `better-auth`. `npm audit fix` only offers a downgrade to Prisma 6.x.
+
+What matters is that none of it ships. The runtime image is built from Next's standalone
+output, which traces the modules the server actually imports — 31 packages — and verified
+absent from the image are `mysql2`, `deepmerge-ts`, `prisma`, and Studio:
+
+```
+$ docker run --rm --entrypoint /bin/sh fathom-clone-app -c 'ls /app/node_modules | wc -l'
+31
+```
+
+Neither advisory is reachable anyway: one needs a MySQL connection, the other needs a
+recursive object graph passed to a config merge. `npm audit` therefore fails the build on
+**critical** only, and prints the full report either way.
 
 ### Notes
 
