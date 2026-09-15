@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "prisma generate && next build",
+    "build": "node scripts/check-env.mjs --phase=build && prisma generate && next build",
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
@@ -21,7 +21,8 @@
     "scan:sast": "docker run --rm -v \"$PWD:/src\" -w /src semgrep/semgrep semgrep scan --config p/default --config p/typescript --config p/react --config p/nextjs --config p/nodejs --config p/owasp-top-ten --config p/secrets --error",
     "scan:deps": "npm audit --omit=dev",
     "scan:image": "docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:latest image --severity HIGH,CRITICAL --ignore-unfixed cadence:local",
-    "scan": "npm run scan:sast && npm run scan:deps"
+    "scan": "npm run scan:sast && npm run scan:deps",
+    "check:env": "node scripts/check-env.mjs --phase=deploy"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.125.0",

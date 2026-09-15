@@ -17,6 +17,15 @@ export const storageDriver: StorageDriver =
 
 const LOCAL_ROOT = path.join(process.cwd(), "uploads");
 
+if (storageDriver === "local" && process.env.VERCEL) {
+  // Caught by scripts/check-env.mjs at build time; this is the backstop for a
+  // variable changed after deploy, so the failure names its own cause.
+  throw new Error(
+    "STORAGE_DRIVER=local cannot work on Vercel: the filesystem is read-only. " +
+      "Set STORAGE_DRIVER=r2 with the R2_* variables, or deploy to a host with a disk.",
+  );
+}
+
 /**
  * Upload instructions handed to the browser.
  *  - `direct`: browser PUTs straight to R2 (bypasses the serverless body limit)

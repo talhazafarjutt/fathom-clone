@@ -534,10 +534,27 @@ web service, a managed Postgres, a disk for uploads, and the health check in one
 ### Vercel, step by step
 
 1. Import the repo. The framework is detected automatically.
-2. Create Postgres (Neon works well) and set `DATABASE_URL`.
-3. Set `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`, `NEXT_PUBLIC_APP_URL`, `GROQ_API_KEY`.
-4. Set `STORAGE_DRIVER=r2` and the four `R2_*` variables.
-5. Deploy. `vercel.json` runs `prisma migrate deploy` as part of the build.
+2. **Clear any Build Command override in Project Settings.** A value set there wins
+   over `vercel.json`, and the build needs the command in `vercel.json`, which runs the
+   environment preflight and the migration.
+3. Create Postgres (Neon works well) and set `DATABASE_URL` for **Production and
+   Preview**. Paste the raw `postgresql://…` string: no surrounding quotes, no `psql`
+   prefix, and not a `prisma+postgres://` Accelerate URL — migrations need the direct
+   connection string.
+4. Set `BETTER_AUTH_SECRET` (`openssl rand -hex 32`), `BETTER_AUTH_URL`,
+   `NEXT_PUBLIC_APP_URL`, `GROQ_API_KEY`.
+5. Set `STORAGE_DRIVER=r2` and the four `R2_*` variables. Not optional on Vercel: the
+   filesystem is read-only, so the local driver cannot store an upload.
+6. Deploy.
+
+The build starts with [`scripts/check-env.mjs`](scripts/check-env.mjs), which fails with
+a sentence naming the problem rather than a provider error code. It catches a missing or
+quoted `DATABASE_URL`, a pasted `psql` command, a `prisma+postgres://` scheme, a
+non-Postgres scheme, a URL with no database name, a placeholder or short
+`BETTER_AUTH_SECRET`, `STORAGE_DRIVER=local` on Vercel, missing `R2_*` variables, and a
+missing `GROQ_API_KEY`. It also warns when Groq is selected on Vercel, where a Hobby
+function stops at 60s. The same check runs in the container entrypoint, and
+`npm run check:env` runs it locally.
 
 ### Render, step by step
 
