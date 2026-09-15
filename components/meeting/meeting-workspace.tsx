@@ -117,11 +117,11 @@ export function MeetingWorkspace({
 
         <div className="flex items-center justify-between px-4 py-2 text-xs text-muted">
           <span className="flex items-center gap-2">
-            {segments.length} segments
+            <span className="eyebrow">{segments.length} segments</span>
             {translated && (
               <span
                 title={`This recording was in ${sourceLanguage ?? "another language"}. Transcripts are stored in English, so this text is Whisper's translation rather than the words as spoken.`}
-                className="rounded-full bg-surface-muted px-2 py-0.5 text-accent"
+                className="rounded-full bg-primary-soft px-2 py-0.5 text-primary"
               >
                 translated from {sourceLanguage ?? "another language"}
               </span>
@@ -129,7 +129,7 @@ export function MeetingWorkspace({
             {speakersInferred && (
               <span
                 title="This recording was transcribed by Whisper, which has no speaker diarization. Speaker labels were inferred from the conversation and may be wrong."
-                className="rounded-full bg-surface-muted px-2 py-0.5 text-warning"
+                className="rounded-full bg-warning-soft px-2 py-0.5 text-warning"
               >
                 speakers inferred
               </span>
@@ -164,7 +164,7 @@ export function MeetingWorkspace({
               type="button"
               onClick={() => setTab(item.id)}
               className={cn(
-                "rounded-lg px-3 py-1.5 text-sm font-medium transition-colors",
+                "rounded-full px-4 py-1.5 text-sm font-medium transition-colors",
                 tab === item.id
                   ? "bg-primary-soft text-primary"
                   : "text-muted hover:bg-surface-muted",

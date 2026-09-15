@@ -103,7 +103,7 @@ export function ProcessingView({
               <li
                 key={step.status}
                 className={cn(
-                  "flex items-center gap-3 rounded-lg border border-border px-4 py-3 text-sm",
+                  "flex items-center gap-3 rounded-2xl border border-border px-4 py-3 text-sm",
                   active && "border-primary bg-primary-soft",
                   !active && !done && "text-muted",
                 )}

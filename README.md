@@ -289,6 +289,18 @@ and falls back to a single speaker.
 
 ---
 
+### Design
+
+The interface follows **8x.social**'s visual language: a warm cream canvas (`#fcfbf6`)
+instead of the usual grey, one saturated electric blue (`#0021cc`) carrying every action,
+Syne for headings, Inter for UI text, and DM Mono for the small uppercase labels above
+headings and on metadata. Controls are pills, panels are rounded to 20px.
+
+It is a token swap, not a rewrite: every colour in the app resolves through the custom
+properties at the top of [`app/globals.css`](app/globals.css), so no component holds a
+literal colour. Dark mode redefines the same tokens against a blue-tinted near-black,
+and body text sits at 17.7:1 contrast with muted text at 7.4:1.
+
 ## 5. Every file, explained
 
 ```

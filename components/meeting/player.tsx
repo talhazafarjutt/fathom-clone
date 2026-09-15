@@ -60,7 +60,7 @@ export function Player({
         value={rate}
         onChange={(e) => onRate(Number(e.target.value))}
         aria-label="Playback speed"
-        className="h-8 rounded-lg border border-border bg-surface px-2 text-xs"
+        className="h-8 rounded-full border border-border bg-surface px-3 text-xs"
       >
         {RATES.map((option) => (
           <option key={option} value={option}>

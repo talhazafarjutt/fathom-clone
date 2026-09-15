@@ -47,9 +47,7 @@ export default async function LandingPage() {
       </header>
 
       <section className="flex flex-col items-start gap-6 py-20">
-        <span className="rounded-full bg-primary-soft px-3 py-1 text-xs font-medium text-primary">
-          Meeting intelligence
-        </span>
+        <span className="eyebrow">Meeting intelligence</span>
         <h1 className="max-w-2xl text-4xl font-semibold leading-tight tracking-tight sm:text-5xl">
           Every call, written up before you close the tab.
         </h1>

@@ -1,33 +1,43 @@
 @import "tailwindcss";
 
 :root {
-  --background: #f7f7f8;
+  /* Palette taken from 8x.social: a warm cream canvas rather than grey, one
+     saturated electric blue carrying every action, and near-black warm text. */
+  --background: #fcfbf6;
   --surface: #ffffff;
-  --surface-muted: #f2f2f4;
-  --foreground: #17171a;
-  --muted: #6b6b76;
-  --border: #e4e4e9;
-  --primary: #4f46e5;
+  --surface-muted: #f5f4f1;
+  --foreground: #0e121b;
+  --muted: #7c7c7c;
+  --border: #e1e4ea;
+  --primary: #0021cc;
   --primary-foreground: #ffffff;
-  --primary-soft: #eef0fe;
-  --success: #15803d;
-  --warning: #b45309;
+  --primary-soft: #f5f6ff;
+  --success: #1fc16b;
+  --warning: #9a6b00;
+  --warning-soft: #ffecc0;
   --danger: #b91c1c;
+
+  /* 8x rounds hard: pills for controls, generous radii on panels. */
+  --radius-control: 9999px;
+  --radius-card: 20px;
+  --radius-panel: 24px;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0b0b0f;
-    --surface: #14141b;
-    --surface-muted: #1b1b24;
-    --foreground: #ededf2;
-    --muted: #9a9aa8;
-    --border: #262632;
-    --primary: #7c74ff;
-    --primary-foreground: #0b0b0f;
-    --primary-soft: #1e1b3a;
-    --success: #4ade80;
-    --warning: #fbbf24;
+    /* Their dark sections are a blue-tinted near-black, not neutral grey. */
+    --background: #0b0e16;
+    --surface: #111520;
+    --surface-muted: #171c29;
+    --foreground: #f4f5f7;
+    --muted: #98a0b3;
+    --border: #232a3a;
+    --primary: #5b7cff;
+    --primary-foreground: #070912;
+    --primary-soft: #16203f;
+    --success: #1fc16b;
+    --warning: #ffc964;
+    --warning-soft: #33280f;
     --danger: #f87171;
   }
 }
@@ -45,14 +55,37 @@
   --color-success: var(--success);
   --color-warning: var(--warning);
   --color-danger: var(--danger);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-warning-soft: var(--warning-soft);
+  --font-sans: var(--font-inter);
+  --font-display: var(--font-syne);
+  --font-mono: var(--font-dm-mono);
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
+  /* 8x sets slightly negative tracking on UI text */
+  letter-spacing: -0.2px;
+}
+
+/* Headings are Syne, semibold, tracked tighter as they get larger. */
+h1,
+h2,
+h3 {
+  font-family: var(--font-display), var(--font-sans), ui-sans-serif, system-ui, sans-serif;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+/* The small uppercase mono label 8x uses above headings and on metadata. */
+.eyebrow {
+  font-family: var(--font-mono), ui-monospace, monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.84px;
+  font-size: 0.75rem;
+  line-height: 1rem;
+  color: var(--muted);
 }
 
 ::selection {
